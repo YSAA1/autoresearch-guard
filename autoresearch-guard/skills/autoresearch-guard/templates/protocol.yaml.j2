@@ -7,6 +7,9 @@ forbidden_splits:
 expected_metrics: []
 validation_gates: []
 require_seed: true
+spiral_budget:
+  max_failed_attempts: 3
+  max_flatline_count: 3
 required_outputs:
   - evidence_ledger.jsonl
   - audit_report.yaml

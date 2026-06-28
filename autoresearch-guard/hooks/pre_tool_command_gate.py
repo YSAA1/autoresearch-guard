@@ -55,7 +55,7 @@ def blocks_protocol_write(command: str) -> bool:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Block deterministic AutoResearch Guard command violations.")
+    parser = argparse.ArgumentParser(description="拦截 AutoResearch Guard 的确定性命令违规。")
     parser.add_argument("--command", default="")
     parser.add_argument("--cwd", default="")
     args = parser.parse_args()

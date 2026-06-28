@@ -1,47 +1,47 @@
 # AutoResearch Guard Goal
 
-Iteration: {{ iteration_id }}
+迭代：{{ iteration_id }}
 
-## Objective
+## 目标
 
 {{ objective }}
 
-## Hypothesis
+## 假设
 
 {{ hypothesis }}
 
-## Protocol
+## 协议
 
-- Protocol file: `.research/current/protocol.lock.yaml`
-- Protocol digest: `{{ protocol_digest }}`
-- Allowed splits: {{ allowed_splits }}
-- Forbidden splits: {{ forbidden_splits }}
+- 协议文件：`.research/current/protocol.lock.yaml`
+- 协议摘要：`{{ protocol_digest }}`
+- 允许的划分：{{ allowed_splits }}
+- 禁止的划分：{{ forbidden_splits }}
 
-## Allowed Work
+## 允许的工作
 
 {{ allowed_work_lines }}
 
-## Forbidden Work
+## 禁止的工作
 
 {{ forbidden_work_lines }}
 
-## Blocked Actions
+## 被拦截动作
 
 {{ blocked_action_lines }}
 
-## Claim Boundary
+## 论断边界
 
-- Max claim level: {{ max_claim_level }}
-- Forbidden claims: {{ forbidden_claims }}
+- 最高论断等级：{{ max_claim_level }}
+- 禁止的论断：{{ forbidden_claims }}
 
-## Must Produce Before Ending
+## 结束前必须产出
 
 {{ must_produce_lines }}
 
-## Deterministic Gates
+## 确定性门禁
 
 {{ validation_gate_lines }}
 
-## Completion Rule
+## 完成规则
 
-Do not end this `/goal` until evidence has been recorded, deterministic audit has run, AI evidence review has been written, and the proposed decision has been checked by `arx_decide.py`.
+在证据已记录、确定性审计已运行、AI 证据审查已编写，且 proposed 决策已通过 `arx_decide.py` 检查之前，不得结束此 `/goal`。

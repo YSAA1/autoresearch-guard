@@ -66,9 +66,18 @@ def main() -> int:
     if not args.allow_unlocked and protocol.get("locked") is not True:
         raise ArxError("protocol.lock.yaml is not locked; set locked: true after human review")
 
-    for field in ["iteration_id", "objective", "hypothesis"]:
+    for field in ["iteration_id", "objective", "hypothesis", "evidence_basis"]:
         if not hypothesis.get(field):
             raise ArxError(f"hypothesis.yaml missing required field: {field}")
+
+    reuse = hypothesis.get("reuse_plan") or {}
+    if not isinstance(reuse, dict):
+        raise ArxError("hypothesis.yaml reuse_plan must be a mapping")
+    reuse_base = str(reuse.get("base") or "").strip()
+    if not reuse_base:
+        raise ArxError("hypothesis.yaml reuse_plan.base is required (repo url or 'build_new')")
+    if reuse_base == "build_new" and not str(reuse.get("build_new_reason") or "").strip():
+        raise ArxError("hypothesis.yaml reuse_plan.build_new_reason is required when base == build_new")
 
     protocol_path = cur / "protocol.lock.yaml"
     digest = sha256_file(protocol_path)

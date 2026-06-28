@@ -11,7 +11,7 @@ PLUGIN_ROOT = SCRIPT_DIR.parent
 COMMON = PLUGIN_ROOT / "skills" / "autoresearch-guard" / "scripts"
 sys.path.insert(0, str(COMMON))
 
-from arx_common import append_jsonl, current_dir, utc_now  # noqa: E402
+from arx_common import utc_now  # noqa: E402
 
 
 def payload_from_stdin() -> dict:
@@ -44,7 +44,7 @@ def result_hints(command: str) -> list[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Capture command metadata and remind evidence recording.")
+    parser = argparse.ArgumentParser(description="捕获命令元数据并提醒记录证据。")
     parser.add_argument("--command", default="")
     parser.add_argument("--cwd", default="")
     parser.add_argument("--exit-code", type=int, default=None)
@@ -59,17 +59,8 @@ def main() -> int:
     if research_root is None or not command:
         return 0
 
-    record = {
-        "timestamp": utc_now(),
-        "command": command,
-        "cwd": str(cwd),
-        "exit_code": exit_code,
-        "log_path": args.log_path or payload.get("log_path") or "",
-        "result_hints": result_hints(command),
-    }
-    append_jsonl(current_dir(research_root) / "tool_capture.jsonl", record)
     if likely_experiment(command):
-        print("AutoResearch Guard: experiment-like command detected. Record deterministic evidence with arx_record.py before ending the goal.")
+        print("AutoResearch Guard：检测到类实验命令。结束 goal 前请用 arx_record.py 记录确定性证据。")
     return 0
 
 

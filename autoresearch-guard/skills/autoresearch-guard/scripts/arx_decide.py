@@ -59,6 +59,17 @@ def main() -> int:
     if decision in forbidden:
         raise ArxError(f"invalid decision: {decision} is forbidden by audit_report.yaml")
 
+    spiral_level = ""
+    spiral = audit.get("spiral_risk") or {}
+    if isinstance(spiral, dict):
+        spiral_level = str(spiral.get("level") or "none")
+    if spiral_level == "critical":
+        spiral_response = str(proposal.get("spiral_response") or "").strip()
+        if not spiral_response:
+            raise ArxError("spiral_risk is critical; decision.proposed.yaml must include non-empty spiral_response")
+        if decision == "proceed" and not proposal.get("requires_human"):
+            raise ArxError("spiral_risk is critical; 'proceed' requires requires_human: true plus spiral_response")
+
     committed = dict(proposal)
     committed["committed_at"] = utc_now()
     committed["audit_report"] = str(audit_path.resolve())

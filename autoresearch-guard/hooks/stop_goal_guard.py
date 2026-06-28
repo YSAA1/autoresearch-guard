@@ -10,7 +10,7 @@ PLUGIN_ROOT = SCRIPT_DIR.parent
 COMMON = PLUGIN_ROOT / "skills" / "autoresearch-guard" / "scripts"
 sys.path.insert(0, str(COMMON))
 
-from arx_common import current_dir, load_jsonl  # noqa: E402
+from arx_common import current_dir, load_current_yaml, load_jsonl, read_text  # noqa: E402
 
 REQUIRED = ["audit_report.yaml", "ai_evidence_review.md", "decision.yaml"]
 
@@ -29,9 +29,21 @@ def meaningful(path: Path) -> bool:
     return bool(text) and "TBD by AI" not in text
 
 
+def has_failures(entries: list[dict]) -> bool:
+    return any(str(e.get("status") or "") == "fail" or int(e.get("exit_code") or 0) != 0 for e in entries)
+
+
+def lessons_updated_for_iteration(research_root: Path, iteration_id: str) -> bool:
+    anti = research_root / "lessons" / "anti_patterns.yaml"
+    if not anti.exists():
+        return False
+    return iteration_id in read_text(anti)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Prevent ending guarded /goal with incomplete closure artifacts.")
+    parser = argparse.ArgumentParser(description="在缺少闭环产物时阻止结束受控 /goal。")
     parser.add_argument("--cwd", default="")
+    parser.add_argument("--allow-incomplete", action="store_true")
     args = parser.parse_args()
     cwd = Path(args.cwd or Path.cwd()).resolve()
     research_root = find_research_root(cwd)
@@ -41,8 +53,16 @@ def main() -> int:
 
     cur = current_dir(research_root)
     missing = [name for name in REQUIRED if not meaningful(cur / name)]
-    if not load_jsonl(cur / "evidence_ledger.jsonl"):
+    entries = load_jsonl(cur / "evidence_ledger.jsonl")
+    if not entries:
         missing.append("evidence_ledger.jsonl")
+
+    if has_failures(entries) and not args.allow_incomplete:
+        hypothesis = load_current_yaml(research_root, "hypothesis.yaml")
+        iteration_id = str(hypothesis.get("iteration_id") or "")
+        if iteration_id and not lessons_updated_for_iteration(research_root, iteration_id):
+            missing.append("anti_patterns.yaml (含本轮 iteration_id 的失败经验)")
+
     if missing:
         print(json.dumps({"complete": False, "missing": missing}, ensure_ascii=True))
         return 2

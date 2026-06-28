@@ -1,18 +1,22 @@
-# Claim Levels
+# 论断等级
 
-Use the weakest claim supported by evidence.
+使用证据所能支持的最弱论断。等级定义供 AI 在 `ai_evidence_review.md` 与人工审查中使用。
 
-## Levels
+## 等级
 
-- `exploratory`: smoke results or early validation signals only.
-- `validation`: locked validation protocol with recorded evidence and audit pass.
-- `test`: human-approved test split evaluation after validation success.
-- `paper`: replicated results, baselines, ablations, and claim boundary review.
-- `production`: operational deployment evidence and monitoring.
+- `exploratory`：仅 smoke 结果或早期验证信号。
+- `validation`：已锁定的验证协议，且有记录证据并通过审计。
+- `test`：验证成功后、经人工批准的 test 划分评估。
 
-## Promotion Rules
+`paper` / `production` 等级不在 AI 研究循环自主可达范围，已从本表中移除。
 
-- Never promote from validation to test-level claims if `audit_report.yaml` lists `test_contamination: true`.
-- Never claim `paper` or `production` from validation-only evidence.
-- If validation gates are missing or failed, `promote` must be forbidden.
-- If evidence is incomplete, claims stay exploratory at most.
+## Promotion 规则
+
+- 若 `audit_report.yaml` 列出 `test_contamination: true`，不得从 validation 提升到 test 级论断。
+- 若 validation 门禁缺失或失败，必须禁止 `promote`。
+- 若证据不完整，论断至多保持 exploratory。
+- 若 `audit_report.yaml.spiral_risk.level == critical`，禁止 `promote`。
+
+## 脚本强制范围
+
+`arx_audit` 通过 `forbidden_decisions` 禁止非法 `promote`（含 spiral critical 触发的禁令）。`claim_boundary.yaml` 编入 `active_goal.md` 供 AI 遵守，但脚本**不**解析审查文档中的论断措辞。越界论断由 AI 与人工在 review 阶段拦截。

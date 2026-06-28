@@ -71,6 +71,8 @@ def main() -> int:
         "protocol.lock.yaml": render("protocol.yaml.j2", context),
         "blocked_actions.yaml": render("blocked_actions.yaml.j2", context),
         "claim_boundary.yaml": render("claim_boundary.yaml.j2", context),
+        "literature_review.md": render("literature_review.md.j2", context),
+        "ai_evidence_review.md": render("ai_evidence_review.md.j2", context),
         "next_goal.md": "# Next Goal\n\nTBD by AI after decision.yaml is committed.\n",
         "evidence_ledger.jsonl": "",
     }

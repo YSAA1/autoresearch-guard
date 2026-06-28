@@ -15,6 +15,7 @@ from arx_common import (
     listify,
     load_current_yaml,
     load_jsonl,
+    read_text,
     sha256_file,
     utc_now,
     write_yaml,
@@ -69,6 +70,73 @@ def aggregate(values: list[float], mode: str) -> float:
     if mode == "mean":
         return mean(values)
     raise ArxError(f"unknown aggregation: {mode}")
+
+
+def compute_spiral_risk(
+    entries: list[dict[str, Any]],
+    review_text: str,
+    blocked: list[tuple[str, str, str]],
+    budget: dict[str, Any],
+) -> dict[str, Any]:
+    max_failed = int(budget.get("max_failed_attempts") or 3)
+    max_flat = int(budget.get("max_flatline_count") or 3)
+
+    failed = sum(
+        1 for e in entries
+        if str(e.get("status") or "") == "fail" or int(e.get("exit_code") or 0) != 0
+    )
+
+    flatline_count = 0
+    by_metric: dict[str, list[float]] = {}
+    for e in entries:
+        metrics = e.get("metrics") or {}
+        for name, value in metrics.items():
+            if isinstance(value, (int, float)):
+                by_metric.setdefault(str(name), []).append(float(value))
+    for values in by_metric.values():
+        if len(values) >= max_flat:
+            flat = all(abs(values[i] - values[i - 1]) < 1e-9 for i in range(1, len(values)))
+            if flat:
+                flatline_count = max(flatline_count, len(values))
+
+    no_signal_streak = review_text.lower().count("no_signal")
+
+    blocked_counts: dict[str, int] = {}
+    for action, _reason, pattern in blocked:
+        if not pattern:
+            continue
+        hits = sum(1 for e in entries if contains_pattern(str(e.get("command") or ""), pattern))
+        if hits:
+            blocked_counts[action] = hits
+    repeated_blocked = max(blocked_counts.values()) if blocked_counts else 0
+
+    signals: list[str] = []
+    if failed >= max_failed:
+        signals.append("same_hypothesis_attempts")
+    if flatline_count >= max_flat:
+        signals.append("metric_flatline")
+    if no_signal_streak >= 2:
+        signals.append("no_signal_streak")
+    if repeated_blocked >= 3:
+        signals.append("repeated_blocked_actions")
+
+    if len(signals) >= 2 or (failed >= max_failed and max_failed > 0):
+        level = "critical"
+    elif signals:
+        level = "caution"
+    else:
+        level = "none"
+
+    return {
+        "level": level,
+        "signals": signals,
+        "counts": {
+            "same_hypothesis_attempts": failed,
+            "metric_flatline": flatline_count,
+            "no_signal_streak": no_signal_streak,
+            "repeated_blocked_actions": repeated_blocked,
+        },
+    }
 
 
 def evaluate_gates(protocol: dict[str, Any], entries: list[dict[str, Any]]) -> tuple[bool, list[dict[str, Any]], list[str]]:
@@ -198,8 +266,16 @@ def main() -> int:
     evidence_valid = bool(entries) and not evidence_violations
     protocol_violation = bool(protocol_violations)
 
+    review_path = cur / "ai_evidence_review.md"
+    review_text = read_text(review_path) if review_path.exists() else ""
+    blocked_for_spiral = blocked_patterns(load_current_yaml(root, "blocked_actions.yaml"))
+    spiral_budget = protocol.get("spiral_budget") or {}
+    spiral_risk = compute_spiral_risk(entries, review_text, blocked_for_spiral, spiral_budget)
+
     forbidden_decisions: list[str] = []
     if not evidence_valid or protocol_violation or test_contamination or not gate_passed:
+        forbidden_decisions.append("promote")
+    if spiral_risk.get("level") == "critical":
         forbidden_decisions.append("promote")
 
     report = {
@@ -210,6 +286,7 @@ def main() -> int:
         "protocol_violation": protocol_violation,
         "test_contamination": test_contamination,
         "validation_gate_passed": gate_passed,
+        "spiral_risk": spiral_risk,
         "forbidden_decisions": forbidden_decisions,
         "checks": checks,
         "gate_results": gate_results,
@@ -220,7 +297,7 @@ def main() -> int:
     }
     write_yaml(cur / "audit_report.yaml", report)
     print(f"Audit wrote {cur / 'audit_report.yaml'}")
-    print(f"evidence_valid={evidence_valid} protocol_violation={protocol_violation} validation_gate_passed={gate_passed}")
+    print(f"evidence_valid={evidence_valid} protocol_violation={protocol_violation} validation_gate_passed={gate_passed} spiral_risk={spiral_risk.get('level')}")
     if violations:
         print("violations:")
         for violation in violations:

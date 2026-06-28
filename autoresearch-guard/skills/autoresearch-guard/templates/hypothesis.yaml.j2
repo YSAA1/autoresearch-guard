@@ -4,10 +4,13 @@ objective: "{{ objective }}"
 hypothesis: "{{ hypothesis }}"
 rationale: ""
 expected_signal: ""
-status: draft
+evidence_basis: ""
+reuse_plan:
+  base: ""
+  build_new_reason: ""
 allowed_work: []
 forbidden_work:
-  - do not run test split unless a human explicitly unlocks it
+  - 除非人工明确解锁，否则不得运行 test 划分
 must_produce:
   - evidence_ledger.jsonl
   - audit_report.yaml

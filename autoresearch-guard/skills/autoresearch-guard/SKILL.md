@@ -1,81 +1,74 @@
 ---
 name: autoresearch-guard
-description: Use when Codex needs to run a research project as a guarded /goal loop with .research state, hypotheses, locked protocols, evidence ledgers, deterministic audits, AI evidence reviews, decision gate checks, lessons, and archives. Trigger when the user asks for AutoResearch Guard, evidence-bound research iteration, dead-end detection, pivot/refine loops, constrained Codex /goal generation, or research evidence auditing.
+description: 当 Codex 需要将研究项目作为受控的 /goal 循环运行时，使用 `.research` 状态、文献与现有实现搜索、假设、锁定协议、证据台账、确定性审计、死胡同检测、AI 证据审查、决策门禁检查、经验总结与归档。触发条件：用户请求 AutoResearch Guard、证据约束的研究迭代、死胡同检测、pivot/refine 循环、受约束的 Codex /goal 生成，或研究证据审计。
 ---
 
 # AutoResearch Guard
 
-## Overview
-
-AutoResearch Guard organizes one research iteration as:
+## 概述
 
 ```text
-Hypothesis -> Protocol -> /goal -> Experiment -> Evidence -> Audit -> AI Review -> Decision -> Next Goal or Archive
+Lessons -> Literature -> Hypothesis -> Protocol -> /goal -> Ledger -> Audit -> Review -> Decision -> Closure
 ```
 
-AI remains responsible for research judgement. Scripts and hooks only perform deterministic file, field, hash, metric, and rule checks.
+AI 负责研究判断与 closure 中的 lessons 更新。脚本与 hook 只做确定性检查。文件职责、closure 清单、迭代衔接、强制边界与 MCP 配置见 `references/workflow.md`。
 
-## Hard Boundary
+## 核心原则：不重复造轮子
 
-Do not let scripts or hooks make scientific decisions. They may:
+任何方法在写实验代码前，必须先调查 prior art：论文（Semantic Scholar MCP）+ 现有实现（WebSearch）。复用优先；重写必须在 `hypothesis.yaml.reuse_plan.build_new_reason` 给理由。`arx_compile_goal.py` 用确定性字段检查强制本原则。详见 `references/prior_art.md`。
 
-- create `.research` files from templates
-- validate required fields
-- compute file hashes
-- append evidence records
-- check split contamination and blocked actions
-- check locked protocol drift
-- compare metrics against predeclared gates
-- reject decisions that violate deterministic gates
-- move completed iterations into archive
+## 硬性边界
 
-They must not:
+脚本与 hook **可以**：初始化文件、校验字段、哈希、追加 ledger、检查划分污染与 blocked actions、比较 validation gates、报告 `spiral_risk`、拒绝非法 `promote`、拒绝缺 `spiral_response` 的 critical 决策、归档。
 
-- invent research ideas
-- judge novelty
-- explain scientific failure causes
-- choose pivot/refine/promote by themselves
-- rewrite experiment code
-- write claim wording
+脚本与 hook **不得**：发明研究思路、解释科学失败、判断是否真死胡同（只报信号，AI 决定）、选择 pivot/refine/promote、重写实验代码、撰写论断措辞、评新颖性。
 
-## Workflow
+## 依赖
 
-1. Read `.research/lessons/retained_lessons.md` and `.research/lessons/anti_patterns.yaml` if they exist.
-2. Let AI write or revise `.research/current/hypothesis.yaml`.
-3. Let AI propose `.research/current/protocol.lock.yaml`, then require human confirmation by setting `locked: true`.
-4. Run `scripts/arx_compile_goal.py` to render `.research/current/active_goal.md`.
-5. Use the rendered file as the Codex `/goal` body.
-6. Execute the research work in the main agent. Respect `allowed_work`, `forbidden_work`, and `blocked_actions.yaml`.
-7. Run `scripts/arx_record.py` after each meaningful experiment to append deterministic evidence to `evidence_ledger.jsonl`.
-8. Run `scripts/arx_audit.py` to produce `audit_report.yaml`.
-9. AI writes `.research/current/ai_evidence_review.md` with failure attribution, residual risks, and allowed next actions.
-10. AI writes `.research/current/decision.proposed.yaml`.
-11. Run `scripts/arx_decide.py` to reject illegal decisions or commit the proposal to `decision.yaml`.
-12. Generate `next_goal.md` manually from the decision, or run `scripts/arx_archive.py` to close the iteration.
+- **Semantic Scholar MCP**（`s2-mcp-server`）：Literature 阶段搜论文与引用图。配置见 `references/workflow.md` 附录。MCP 不可用时降级为 WebSearch。
+- **WebSearch**（内置）：搜现有实现/仓库。
 
-## Script Map
+## 工作流
 
-- `scripts/arx_init.py`: create `.research/current`, lessons, archive folders, and initial state templates.
-- `scripts/arx_compile_goal.py`: render `active_goal.md` from AI-authored YAML files after protocol lock.
-- `scripts/arx_record.py`: append JSONL evidence with command, split, seed, file digests, and metrics.
-- `scripts/arx_audit.py`: check evidence integrity, protocol drift, test contamination, blocked actions, required metrics, and validation gates.
-- `scripts/arx_decide.py`: check `decision.proposed.yaml` against `audit_report.yaml` and commit legal decisions.
-- `scripts/arx_status.py`: print current hypothesis, lock state, latest evidence, audit, blocked actions, claim boundary, and human gate status.
-- `scripts/arx_archive.py`: move a completed `.research/current` into `.research/archive`.
+1. **Lessons** — 若存在，阅读 `.research/lessons/`。完成：已吸收或确认不存在。
+2. **Literature** — AI 用 S2 MCP 搜论文 + WebSearch 搜现有实现，编写 `literature_review.md`（见 `references/prior_art.md`）。完成：≥1 candidate_idea + ≥1 existing_implementation，每个有证据链接。
+3. **Hypothesis** — AI 编写或修订 `hypothesis.yaml`，含 `evidence_basis` 与 `reuse_plan`。完成：必填字段已填。
+4. **Protocol** — AI 编写 `protocol.lock.yaml`（含 `spiral_budget`）；人工设 `locked: true`。完成：协议已锁定。
+5. **Compile** — `scripts/arx_compile_goal.py` 校验 `evidence_basis` + `reuse_plan` 并渲染 `active_goal.md`。完成：goal 已生成。
+6. **Goal** — 将 `active_goal.md` 作为 Codex `/goal` 正文。
+7. **Research** — 在 `/goal` 内执行，优先复用 `reuse_plan.base` 指定的现有实现；遵守 allowed/forbidden work 与 `blocked_actions.yaml`。
+8. **Ledger** — 每次有意义实验后 `scripts/arx_record.py`。完成：ledger 有记录。
+9. **Audit** — `scripts/arx_audit.py` 生成 `audit_report.yaml`（含 `spiral_risk`）。完成：报告已写出（有违规时 exit 1，报告仍生成）。
+10. **Review** — AI 编写 `ai_evidence_review.md`（失败归因见 `references/failure_taxonomy.md`）。若 `spiral_risk` 非 none，必须含「死胡同评估」节。完成：无 `TBD by AI`。
+11. **Propose** — AI 编写 `decision.proposed.yaml`；若 `spiral_risk=critical`，必含 `spiral_response`。
+12. **Decide** — `scripts/arx_decide.py`（critical 时拒绝无 `spiral_response` 的 proceed）。完成：`decision.yaml` 已提交。
+13. **Closure** — 更新 `lessons/`（有失败时强制）；编写 `next_goal.md`（若继续）；`scripts/arx_archive.py`；若继续则 `arx_init.py --archive-existing`。分支见 `references/workflow.md`「Closure 与迭代衔接」。
+
+## 脚本
+
+| 脚本 | 用途 |
+|------|------|
+| `arx_init.py` | 创建 `current/`、`lessons/`、`archive/` 及初始模板（含 literature_review.md 与 ai_evidence_review.md） |
+| `arx_compile_goal.py` | 锁定后校验 reuse 字段并渲染 `active_goal.md` |
+| `arx_record.py` | 追加 ledger 证据 |
+| `arx_audit.py` | 确定性审计 + `spiral_risk` 信号 |
+| `arx_decide.py` | 检查并提交决策；escape gate |
+| `arx_status.py` | 打印当前状态 |
+| `arx_archive.py` | 归档 `current/` |
 
 ## Hooks
 
-Plugin hooks live in the plugin root `hooks/` folder. They are guardrails, not a research engine.
+护栏，非研究引擎。
 
-- `pre_tool_command_gate.py`: blocks deterministic violations before a command runs.
-- `post_tool_capture.py`: records command metadata and reminds Codex to write evidence.
-- `stop_goal_guard.py`: prevents ending a `/goal` while required evidence, audit, AI review, or decision artifacts are missing.
+- `pre_tool_command_gate.py` — 拦截确定性命令违规
+- `post_tool_capture.py` — 检测类实验命令，提醒写入 ledger（不写日志文件）
+- `stop_goal_guard.py` — 缺少 closure 产物或失败时未写 lessons → 阻止结束 `/goal`
 
-## References
+## 参考
 
-Load only the relevant reference:
-
-- `references/workflow.md`: end-to-end loop and file responsibilities.
-- `references/failure_taxonomy.md`: terms for AI evidence review and dead-end detection.
-- `references/claim_levels.md`: allowed claim strength and promotion boundaries.
-- `references/goal_rules.md`: rules for compiling constrained `/goal` text.
+- `references/workflow.md` — 目录、文件职责、closure、迭代衔接、强制边界、MCP 配置附录
+- `references/prior_art.md` — 不重复造轮子：论文 + 现有实现调查方法
+- `references/spiral_detection.md` — 死胡同信号、阈值、等级定义
+- `references/failure_taxonomy.md` — 审查用失败标签（AI 侧，脚本不校验）
+- `references/claim_levels.md` — 论断等级；脚本仅强制 `promote` 门禁
+- `references/goal_rules.md` — goal 编译规则与 reuse 字段校验

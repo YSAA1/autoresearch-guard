@@ -4,7 +4,19 @@ import argparse
 import shutil
 from pathlib import Path
 
-from arx_common import ArxError, add_common_args, archive_dir, current_dir, load_current_yaml, slug, utc_now, write_yaml
+from arx_common import (
+    ArxError,
+    add_common_args,
+    archive_dir,
+    current_dir,
+    listify,
+    load_current_yaml,
+    load_jsonl,
+    read_text,
+    slug,
+    utc_now,
+    write_yaml,
+)
 
 REQUIRED_COMPLETE = [
     "evidence_ledger.jsonl",
@@ -25,6 +37,10 @@ def meaningful(path: Path) -> bool:
     return True
 
 
+def has_failures(entries: list[dict]) -> bool:
+    return any(str(e.get("status") or "") == "fail" or int(e.get("exit_code") or 0) != 0 for e in entries)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Archive completed AutoResearch Guard current state.")
     add_common_args(parser)
@@ -38,11 +54,20 @@ def main() -> int:
         raise ArxError(f"missing current directory: {cur}")
 
     missing = [name for name in REQUIRED_COMPLETE if not meaningful(cur / name)]
-    if missing and not args.allow_incomplete:
-        raise ArxError(f"current iteration is incomplete; missing meaningful files: {', '.join(missing)}")
 
     hypothesis = load_current_yaml(root, "hypothesis.yaml")
     iteration_id = str(hypothesis.get("iteration_id") or args.label or "iteration")
+    entries = load_jsonl(cur / "evidence_ledger.jsonl")
+    lessons_updated = True
+    if has_failures(entries) and iteration_id and iteration_id != "iteration":
+        anti = root / "lessons" / "anti_patterns.yaml"
+        lessons_updated = anti.exists() and iteration_id in read_text(anti)
+        if not lessons_updated:
+            missing.append("anti_patterns.yaml (含本轮 iteration_id 的失败经验)")
+
+    if missing and not args.allow_incomplete:
+        raise ArxError(f"current iteration is incomplete; missing meaningful files: {', '.join(missing)}")
+
     timestamp = utc_now().replace(":", "").replace("-", "")
     dest = archive_dir(root) / f"{timestamp}-{slug(iteration_id)}"
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -52,6 +77,7 @@ def main() -> int:
         "iteration_id": iteration_id,
         "allow_incomplete": args.allow_incomplete,
         "missing_at_archive": missing,
+        "lessons_updated": lessons_updated,
     })
     print(f"Archived current iteration to {dest}")
     return 0
