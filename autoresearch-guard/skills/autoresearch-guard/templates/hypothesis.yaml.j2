@@ -1,0 +1,15 @@
+iteration_id: "{{ iteration_id }}"
+title: "{{ title }}"
+objective: "{{ objective }}"
+hypothesis: "{{ hypothesis }}"
+rationale: ""
+expected_signal: ""
+status: draft
+allowed_work: []
+forbidden_work:
+  - do not run test split unless a human explicitly unlocks it
+must_produce:
+  - evidence_ledger.jsonl
+  - audit_report.yaml
+  - ai_evidence_review.md
+  - decision.yaml

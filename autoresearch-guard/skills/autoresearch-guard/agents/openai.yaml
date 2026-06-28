@@ -1,0 +1,4 @@
+interface:
+  display_name: "AutoResearch Guard"
+  short_description: "Run evidence-bound research /goal loops."
+  default_prompt: "$autoresearch-guard Prepare a guarded research /goal loop for this project."

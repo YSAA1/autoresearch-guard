@@ -1,0 +1,17 @@
+{
+  "$schema": "autoresearch-guard.hooks.v1",
+  "hooks": [
+    {
+      "event": "pre_tool_command",
+      "command": "python hooks/pre_tool_command_gate.py"
+    },
+    {
+      "event": "post_tool_capture",
+      "command": "python hooks/post_tool_capture.py"
+    },
+    {
+      "event": "stop_goal_guard",
+      "command": "python hooks/stop_goal_guard.py"
+    }
+  ]
+}

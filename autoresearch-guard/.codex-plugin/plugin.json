@@ -1,0 +1,25 @@
+{
+  "name": "autoresearch-guard",
+  "version": "0.1.0",
+  "description": "Guarded Codex research loops with evidence ledgers, deterministic audits, decision gates, and constrained /goal generation.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Autoresearch Guard",
+    "shortDescription": "Run evidence-bound research /goal loops.",
+    "longDescription": "AutoResearch Guard helps Codex run research as constrained /goal loops. AI writes hypotheses, protocols, evidence reviews, and next-step decisions; bundled scripts only initialize state, render goals, record evidence, audit deterministic rule violations, check decisions, report status, and archive completed iterations.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": [
+      "Write",
+      "Automation"
+    ],
+    "defaultPrompt": [
+      "$autoresearch-guard Prepare a guarded research /goal loop for this project.",
+      "$autoresearch-guard Audit the current research evidence and decision gate.",
+      "$autoresearch-guard Archive the completed research iteration."
+    ]
+  }
+}

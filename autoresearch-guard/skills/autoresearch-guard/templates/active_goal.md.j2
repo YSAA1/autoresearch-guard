@@ -1,0 +1,47 @@
+# AutoResearch Guard Goal
+
+Iteration: {{ iteration_id }}
+
+## Objective
+
+{{ objective }}
+
+## Hypothesis
+
+{{ hypothesis }}
+
+## Protocol
+
+- Protocol file: `.research/current/protocol.lock.yaml`
+- Protocol digest: `{{ protocol_digest }}`
+- Allowed splits: {{ allowed_splits }}
+- Forbidden splits: {{ forbidden_splits }}
+
+## Allowed Work
+
+{{ allowed_work_lines }}
+
+## Forbidden Work
+
+{{ forbidden_work_lines }}
+
+## Blocked Actions
+
+{{ blocked_action_lines }}
+
+## Claim Boundary
+
+- Max claim level: {{ max_claim_level }}
+- Forbidden claims: {{ forbidden_claims }}
+
+## Must Produce Before Ending
+
+{{ must_produce_lines }}
+
+## Deterministic Gates
+
+{{ validation_gate_lines }}
+
+## Completion Rule
+
+Do not end this `/goal` until evidence has been recorded, deterministic audit has run, AI evidence review has been written, and the proposed decision has been checked by `arx_decide.py`.
