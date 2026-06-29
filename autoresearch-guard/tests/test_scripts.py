@@ -173,8 +173,9 @@ class ScriptFlowTest(unittest.TestCase):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("forbidden split", result.stdout)
+            self.assertIn("permissionDecision", result.stdout)
 
     def _init_base(self, research: Path, cwd: Path, iteration_id: str = "t-i1") -> None:
         init = self.run_script(
@@ -337,8 +338,9 @@ class ScriptFlowTest(unittest.TestCase):
                 [sys.executable, str(HOOKS / "stop_goal_guard.py"), "--cwd", str(cwd)],
                 cwd=str(cwd), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
-            self.assertEqual(guard.returncode, 2, guard.stdout + guard.stderr)
+            self.assertEqual(guard.returncode, 0, guard.stdout + guard.stderr)
             self.assertIn("anti_patterns.yaml", guard.stdout)
+            self.assertIn('"decision": "block"', guard.stdout)
             # update lessons -> guard passes
             (research / "lessons" / "anti_patterns.yaml").write_text(
                 "anti_patterns:\n  - iteration_id: fail-i1\n    tag: implementation_bug\n",

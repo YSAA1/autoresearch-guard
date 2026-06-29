@@ -1,5 +1,10 @@
 {
   "mcpServers": {
+    "arxiv": {
+      "command": "uvx",
+      "args": ["arxiv-mcp-server"],
+      "startup_timeout_sec": 20
+    },
     "semantic-scholar": {
       "command": "uvx",
       "args": ["s2-mcp-server"],

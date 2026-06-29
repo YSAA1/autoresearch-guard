@@ -33,7 +33,7 @@
 | 步 | 动作 | 完成条件 |
 |----|------|----------|
 | 1 | 阅读 `lessons/`（若存在） | 已吸收 retained lessons 与 anti-patterns |
-| 2 | S2 MCP 搜论文 + WebSearch 搜现有实现，编写 `literature_review.md` | ≥1 candidate_idea + ≥1 existing_implementation，每个有证据链接 |
+| 2 | S2 MCP / arXiv MCP 搜论文 + WebSearch 搜现有实现，编写 `literature_review.md` | ≥1 candidate_idea + ≥1 existing_implementation，每个有证据链接 |
 | 3 | AI 编写 `hypothesis.yaml`，含 `evidence_basis` 与 `reuse_plan` | 必填字段已填 |
 | 4 | AI 编写 `protocol.lock.yaml`（含 `spiral_budget`）；人工设 `locked: true` | 协议已锁定 |
 | 5 | `arx_compile_goal.py` 校验 reuse 字段并渲染 `active_goal.md` | goal 已生成；`state.yaml` 含 `protocol_digest` |
@@ -110,7 +110,7 @@
 
 脚本可以拒绝非法状态。它们不得选择研究方向，不得判定是否真死胡同。
 
-## 附录：Semantic Scholar MCP
+## 附录：研究 MCP
 
 ### 插件已捆绑声明
 
@@ -119,6 +119,11 @@
 ```json
 {
   "mcpServers": {
+    "arxiv": {
+      "command": "uvx",
+      "args": ["arxiv-mcp-server"],
+      "startup_timeout_sec": 20
+    },
     "semantic-scholar": {
       "command": "uvx",
       "args": ["s2-mcp-server"],
@@ -128,9 +133,13 @@
 }
 ```
 
-安装插件后，Codex 自动发现并启动 `semantic-scholar` MCP server（14 工具，覆盖 200M+ 论文、引用图、推荐）。用户可在 `~/.codex/config.toml` 控制开关与工具策略：
+安装插件后，Codex 自动发现并启动 `arxiv` 与 `semantic-scholar` MCP server。`semantic-scholar` 覆盖论文元数据、引用图、推荐；`arxiv` 用于需要 arXiv 原文或全文证据的场景。用户可在 `~/.codex/config.toml` 控制开关与工具策略：
 
 ```toml
+[plugins."autoresearch-guard".mcp_servers.arxiv]
+enabled = true
+default_tools_approval_mode = "prompt"
+
 [plugins."autoresearch-guard".mcp_servers.semantic-scholar]
 enabled = true
 default_tools_approval_mode = "prompt"
@@ -141,15 +150,14 @@ enabled_tools = ["semantic_scholar_search_papers", "semantic_scholar_get_paper",
 
 - `uv`（Astral）：提供 `uvx`。安装见 https://docs.astral.sh/uv/ 或 `pip install uv`。
 - 可选 `SEMANTIC_SCHOLAR_API_KEY`：设为环境变量以提升 API 速率限制。无 key 时 server 以限速模式运行。`uvx s2-mcp-server` 进程会继承宿主环境变量。
+- `arxiv-mcp-server` 默认用本地存储缓存下载论文；插件只声明启动命令，不声明用户机器上的固定绝对路径。
 
 ### 核心工具
 
-`semantic_scholar_search_papers`、`semantic_scholar_get_paper`、`semantic_scholar_references`、`semantic_scholar_citations`、`semantic_scholar_recommendations`。
+Semantic Scholar：`semantic_scholar_search_papers`、`semantic_scholar_get_paper`、`semantic_scholar_references`、`semantic_scholar_citations`、`semantic_scholar_recommendations`。
+
+arXiv：搜索、下载、读取已下载论文等工具，具体名称以 `arxiv-mcp-server` 当前版本暴露的 MCP tools 为准。
 
 ### 降级
 
 MCP server 启动失败或被禁用时，Literature 阶段降级为 WebSearch 搜论文摘要与 arXiv 页；`existing_implementations` 始终用 WebSearch 搜 GitHub。
-
-### 可选补充
-
-`blazickjp/arxiv-mcp-server`（`uvx arxiv-mcp-server`），仅当需 arXiv 全文 PDF 时由用户在自身 config.toml 单独添加。

@@ -26,6 +26,15 @@ def payload_from_stdin() -> dict:
         return {"command": text}
 
 
+def command_from_payload(payload: dict) -> str:
+    tool_input = payload.get("tool_input")
+    if isinstance(tool_input, dict):
+        command = tool_input.get("command")
+        if command:
+            return str(command)
+    return str(payload.get("command") or payload.get("cmd") or "")
+
+
 def find_research_root(cwd: Path) -> Path | None:
     for path in [cwd, *cwd.parents]:
         if (path / ".research" / "current").exists():
@@ -60,7 +69,7 @@ def main() -> int:
     parser.add_argument("--cwd", default="")
     args = parser.parse_args()
     payload = payload_from_stdin()
-    command = args.command or str(payload.get("command") or payload.get("cmd") or "")
+    command = args.command or command_from_payload(payload)
     cwd = Path(args.cwd or payload.get("cwd") or Path.cwd()).resolve()
 
     if not command:
@@ -88,9 +97,20 @@ def main() -> int:
         reasons.append("command appears to edit locked protocol.lock.yaml")
 
     if reasons:
-        print(json.dumps({"allow": False, "reasons": reasons}, ensure_ascii=True))
-        return 2
-    print(json.dumps({"allow": True, "reason": "no deterministic violation"}))
+        reason = "; ".join(reasons)
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": reason,
+                    }
+                },
+                ensure_ascii=True,
+            )
+        )
+        return 0
     return 0
 
 

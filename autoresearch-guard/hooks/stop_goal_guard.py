@@ -64,9 +64,17 @@ def main() -> int:
             missing.append("anti_patterns.yaml (含本轮 iteration_id 的失败经验)")
 
     if missing:
-        print(json.dumps({"complete": False, "missing": missing}, ensure_ascii=True))
-        return 2
-    print(json.dumps({"complete": True, "reason": "guarded research closure artifacts present"}))
+        print(
+            json.dumps(
+                {
+                    "decision": "block",
+                    "reason": "AutoResearch Guard closure is incomplete: " + ", ".join(missing),
+                },
+                ensure_ascii=True,
+            )
+        )
+        return 0
+    print(json.dumps({"continue": True, "systemMessage": "AutoResearch Guard closure artifacts present"}))
     return 0
 
 

@@ -27,6 +27,15 @@ def payload_from_stdin() -> dict:
         return {"command": text}
 
 
+def command_from_payload(payload: dict) -> str:
+    tool_input = payload.get("tool_input")
+    if isinstance(tool_input, dict):
+        command = tool_input.get("command")
+        if command:
+            return str(command)
+    return str(payload.get("command") or payload.get("cmd") or "")
+
+
 def find_research_root(cwd: Path) -> Path | None:
     for path in [cwd, *cwd.parents]:
         if (path / ".research" / "current").exists():
@@ -51,7 +60,7 @@ def main() -> int:
     parser.add_argument("--log-path", default="")
     args = parser.parse_args()
     payload = payload_from_stdin()
-    command = args.command or str(payload.get("command") or payload.get("cmd") or "")
+    command = args.command or command_from_payload(payload)
     cwd = Path(args.cwd or payload.get("cwd") or Path.cwd()).resolve()
     exit_code = args.exit_code if args.exit_code is not None else payload.get("exit_code")
 
@@ -60,7 +69,16 @@ def main() -> int:
         return 0
 
     if likely_experiment(command):
-        print("AutoResearch Guard：检测到类实验命令。结束 goal 前请用 arx_record.py 记录确定性证据。")
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PostToolUse",
+                        "additionalContext": "AutoResearch Guard detected an experiment-like command. Before ending the goal, record deterministic evidence with arx_record.py.",
+                    }
+                }
+            )
+        )
     return 0
 
 

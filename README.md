@@ -7,6 +7,7 @@ AutoResearch Guard is a Codex plugin project for guarded research loops. It keep
 ```text
 autoresearch-guard/
   .codex-plugin/plugin.json
+  .mcp.json
   skills/autoresearch-guard/
     SKILL.md
     scripts/
