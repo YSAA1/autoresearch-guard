@@ -48,7 +48,6 @@ def main() -> int:
     cwd = Path(args.cwd or Path.cwd()).resolve()
     research_root = find_research_root(cwd)
     if research_root is None:
-        print(json.dumps({"complete": True, "reason": "no .research/current found"}))
         return 0
 
     cur = current_dir(research_root)
@@ -74,7 +73,6 @@ def main() -> int:
             )
         )
         return 0
-    print(json.dumps({"continue": True, "systemMessage": "AutoResearch Guard closure artifacts present"}))
     return 0
 
 

@@ -73,12 +73,10 @@ def main() -> int:
     cwd = Path(args.cwd or payload.get("cwd") or Path.cwd()).resolve()
 
     if not command:
-        print(json.dumps({"allow": True, "reason": "no command found"}))
         return 0
 
     research_root = find_research_root(cwd)
     if research_root is None:
-        print(json.dumps({"allow": True, "reason": "no .research/current found"}))
         return 0
 
     protocol = load_current_yaml(research_root, "protocol.lock.yaml")

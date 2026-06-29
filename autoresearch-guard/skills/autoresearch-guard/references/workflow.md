@@ -161,3 +161,17 @@ arXiv：搜索、下载、读取已下载论文等工具，具体名称以 `arxi
 ### 降级
 
 MCP server 启动失败或被禁用时，Literature 阶段降级为 WebSearch 搜论文摘要与 arXiv 页；`existing_implementations` 始终用 WebSearch 搜 GitHub。
+
+## Hooks 附录
+
+`hooks/hooks.json` 中的 command 必须使用 Codex 内联变量 `${PLUGIN_ROOT}`，指向插件安装目录（cache 或 marketplace 副本）。不要用 `$PLUGIN_ROOT`（PowerShell 会当成空环境变量）、不要用 `./hooks/...`（会从项目 cwd 解析，找不到脚本）。
+
+示例：
+
+```json
+"command": "python \"${PLUGIN_ROOT}/hooks/pre_tool_command_gate.py\""
+```
+
+Windows 上用 `python` 而非 `python3`。修改 `hooks.json` 后需重启 Codex，并在 `/hooks` 里重新 trust 该 hook 条目（hash 会变）。
+
+PreToolUse 允许通过时：**exit 0 且 stdout 为空**（或只输出带 `hookSpecificOutput.additionalContext` 的合法 JSON）。不要输出 `{"allow": true}` 等自定义字段，Codex 会报 `invalid pre-tool-use JSON output`。拦截时用 `hookSpecificOutput.permissionDecision: "deny"` 或顶层 `decision: "block"`。
