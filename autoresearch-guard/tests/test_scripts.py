@@ -29,16 +29,19 @@ class ScriptFlowTest(unittest.TestCase):
 
     def test_hooks_manifest_commands_run_from_plugin_root(self) -> None:
         hooks_manifest = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))
-        commands = []
+        hooks = []
         for entries in hooks_manifest["hooks"].values():
             for entry in entries:
-                for hook in entry["hooks"]:
-                    commands.append(hook["command"])
+                hooks.extend(entry["hooks"])
 
-        self.assertEqual(len(commands), 3)
+        self.assertEqual(len(hooks), 3)
         fake_project = PLUGIN_ROOT.parent
-        for command in commands:
+        for hook in hooks:
+            command = hook["command"]
             self.assertIn("${PLUGIN_ROOT}", command)
+            self.assertIn("commandWindows", hook)
+            self.assertIn("%PLUGIN_ROOT%", hook["commandWindows"])
+            self.assertNotIn("${PLUGIN_ROOT}", hook["commandWindows"])
             substituted = command.replace("${PLUGIN_ROOT}", str(PLUGIN_ROOT))
             result = subprocess.run(
                 substituted,
