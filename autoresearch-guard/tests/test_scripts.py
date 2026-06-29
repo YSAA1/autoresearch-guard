@@ -27,6 +27,40 @@ class ScriptFlowTest(unittest.TestCase):
         if result.returncode != 0:
             self.fail(f"command failed\nstdout={result.stdout}\nstderr={result.stderr}")
 
+    def test_hooks_manifest_commands_run_from_plugin_root(self) -> None:
+        hooks_manifest = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))
+        hooks = []
+        for entries in hooks_manifest["hooks"].values():
+            for entry in entries:
+                hooks.extend(entry["hooks"])
+
+        self.assertEqual(len(hooks), 3)
+        fake_project = PLUGIN_ROOT.parent
+        for hook in hooks:
+            command = hook["command"]
+            self.assertIn("${PLUGIN_ROOT}", command)
+            self.assertIn("commandWindows", hook)
+            self.assertIn("%PLUGIN_ROOT%", hook["commandWindows"])
+            self.assertNotIn("${PLUGIN_ROOT}", hook["commandWindows"])
+            substituted = command.replace("${PLUGIN_ROOT}", str(PLUGIN_ROOT))
+            result = subprocess.run(
+                substituted,
+                shell=True,
+                cwd=str(fake_project),
+                text=True,
+                input="{}",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(
+                result.returncode,
+                0,
+                f"{substituted}\nstdout={result.stdout}\nstderr={result.stderr}",
+            )
+            if result.stdout.strip():
+                payload = json.loads(result.stdout)
+                self.assertNotIn("allow", payload)
+
     def test_full_research_lifecycle(self) -> None:
         test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
