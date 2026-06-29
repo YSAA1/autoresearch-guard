@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$PLUGIN_ROOT/hooks/pre_tool_command_gate.py\"",
+            "command": "python ./hooks/pre_tool_command_gate.py",
             "timeout": 10,
             "statusMessage": "Checking AutoResearch Guard command policy"
           }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$PLUGIN_ROOT/hooks/post_tool_capture.py\"",
+            "command": "python ./hooks/post_tool_capture.py",
             "timeout": 10,
             "statusMessage": "Checking AutoResearch Guard evidence reminder"
           }
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"$PLUGIN_ROOT/hooks/stop_goal_guard.py\"",
+            "command": "python ./hooks/stop_goal_guard.py",
             "timeout": 10,
             "statusMessage": "Checking AutoResearch Guard closure"
           }
