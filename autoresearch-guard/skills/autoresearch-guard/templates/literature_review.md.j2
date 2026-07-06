@@ -4,15 +4,17 @@
 
 ## 候选创新点
 
-每个候选必须附证据链接（S2 paperId 或 arXiv ID）。
+每个候选必须附证据链接（S2 paperId 或 arXiv ID）。`hypothesis.yaml.evidence_basis` 必须引用这里的 `idea_id`。
 
-TBD by AI（至少 1 条，格式：idea_id | 描述 | 证据链接 | gap）。
+| idea_id | 描述 | 证据链接 | gap |
+| --- | --- | --- | --- |
 
 ## 现有实现（不重复造轮子）
 
-每个候选方法的已有仓库/代码。复用优先，重写需在 hypothesis.yaml 给 build_new_reason。
+每个候选方法的已有仓库/代码。复用优先；`hypothesis.yaml.reuse_plan.base` 必须引用这里的 `impl_id` 或 `url`。若 `base: build_new`，必须在 hypothesis.yaml 给 `build_new_reason`。
 
-TBD by AI（至少 1 条，格式：name | url | covered_capability）。
+| impl_id | url | covered_capability | reuse_decision |
+| --- | --- | --- | --- |
 
 ## 引用图谱路径
 

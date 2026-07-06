@@ -10,7 +10,7 @@ PLUGIN_ROOT = SCRIPT_DIR.parent
 COMMON = PLUGIN_ROOT / "skills" / "autoresearch-guard" / "scripts"
 sys.path.insert(0, str(COMMON))
 
-from arx_common import current_dir, load_current_yaml, load_jsonl, read_text  # noqa: E402
+from arx_common import current_dir, load_current_yaml, load_jsonl, read_text, research_hooks_enabled  # noqa: E402
 
 REQUIRED = ["audit_report.yaml", "ai_evidence_review.md", "decision.yaml"]
 
@@ -48,6 +48,8 @@ def main() -> int:
     cwd = Path(args.cwd or Path.cwd()).resolve()
     research_root = find_research_root(cwd)
     if research_root is None:
+        return 0
+    if not research_hooks_enabled(research_root):
         return 0
 
     cur = current_dir(research_root)

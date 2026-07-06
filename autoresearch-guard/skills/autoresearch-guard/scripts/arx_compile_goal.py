@@ -11,10 +11,13 @@ from arx_common import (
     listify,
     load_current_yaml,
     markdown_list,
+    parse_markdown_tables,
+    read_text,
     render_template,
     sha256_file,
     template_dir,
     update_state,
+    utc_now,
     write_text,
 )
 
@@ -45,6 +48,59 @@ def gate_lines(protocol: dict[str, Any]) -> list[str]:
         else:
             rows.append(str(gate))
     return rows
+
+
+def _lookup(row: dict[str, str], *names: str) -> str:
+    lowered = {key.lower(): value for key, value in row.items()}
+    for name in names:
+        value = lowered.get(name.lower())
+        if value:
+            return value.strip()
+    return ""
+
+
+def literature_trace_sets(text: str) -> tuple[set[str], set[str]]:
+    idea_ids: set[str] = set()
+    implementation_refs: set[str] = set()
+    for row in parse_markdown_tables(text):
+        section = str(row.get("_section") or "").lower()
+        idea_id = _lookup(row, "idea_id", "idea id", "id")
+        if idea_id and ("候选" in section or "idea" in section or "innovation" in section):
+            idea_ids.add(idea_id)
+
+        is_implementation = (
+            "实现" in section
+            or "implementation" in section
+            or bool(_lookup(row, "impl_id", "implementation_id", "reuse_decision", "covered_capability"))
+        )
+        if is_implementation:
+            for name in ("impl_id", "implementation_id", "name", "url"):
+                value = _lookup(row, name)
+                if value:
+                    implementation_refs.add(value)
+    return idea_ids, implementation_refs
+
+
+def validate_literature_trace(cur: Path, hypothesis: dict[str, Any], reuse_base: str) -> None:
+    literature_path = cur / "literature_review.md"
+    literature_text = read_text(literature_path) if literature_path.exists() else ""
+    idea_ids, implementation_refs = literature_trace_sets(literature_text)
+
+    if not idea_ids:
+        raise ArxError("literature_review.md missing candidate idea table with idea_id")
+    evidence_items = [str(item).strip() for item in listify(hypothesis.get("evidence_basis")) if str(item).strip()]
+    missing_evidence = [item for item in evidence_items if item not in idea_ids]
+    if missing_evidence:
+        raise ArxError(
+            "hypothesis.yaml evidence_basis must reference literature_review.md idea_id: "
+            + ", ".join(missing_evidence)
+        )
+
+    if reuse_base != "build_new":
+        if not implementation_refs:
+            raise ArxError("literature_review.md missing existing implementation table")
+        if reuse_base not in implementation_refs:
+            raise ArxError("hypothesis.yaml reuse_plan.base must reference literature_review.md implementation id or url")
 
 
 def main() -> int:
@@ -78,10 +134,11 @@ def main() -> int:
         raise ArxError("hypothesis.yaml reuse_plan.base is required (repo url or 'build_new')")
     if reuse_base == "build_new" and not str(reuse.get("build_new_reason") or "").strip():
         raise ArxError("hypothesis.yaml reuse_plan.build_new_reason is required when base == build_new")
+    validate_literature_trace(cur, hypothesis, reuse_base)
 
     protocol_path = cur / "protocol.lock.yaml"
     digest = sha256_file(protocol_path)
-    update_state(root, protocol_digest=digest)
+    update_state(root, protocol_digest=digest, compiled_at=utc_now())
 
     context = {
         "iteration_id": hypothesis.get("iteration_id", ""),

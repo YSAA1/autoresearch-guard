@@ -15,6 +15,8 @@ from arx_common import (
     listify,
     load_current_yaml,
     load_jsonl,
+    parse_markdown_tables,
+    parse_timestamp,
     read_text,
     sha256_file,
     utc_now,
@@ -28,6 +30,12 @@ OPS = {
     "<=": operator.le,
     "==": operator.eq,
     "!=": operator.ne,
+}
+
+CLAIM_LEVELS = {
+    "exploratory": 0,
+    "validation": 1,
+    "test": 2,
 }
 
 
@@ -181,6 +189,128 @@ def evaluate_gates(protocol: dict[str, Any], entries: list[dict[str, Any]]) -> t
     return all_pass, results, unknowns
 
 
+def evaluate_baseline(protocol: dict[str, Any], entries: list[dict[str, Any]]) -> tuple[dict[str, Any], bool, list[str]]:
+    baseline = protocol.get("baseline") or {}
+    if not isinstance(baseline, dict) or baseline.get("required") is not True:
+        return {"required": False, "status": "not_required"}, False, []
+
+    metric = str(baseline.get("metric") or "")
+    split = str(baseline.get("split") or "validation")
+    aggregation = str(baseline.get("aggregation") or "max")
+    min_delta = float(baseline.get("min_delta") or 0)
+    higher_is_better = baseline.get("higher_is_better") is not False
+    status: dict[str, Any] = {
+        "required": True,
+        "metric": metric,
+        "split": split,
+        "aggregation": aggregation,
+        "min_delta": min_delta,
+        "higher_is_better": higher_is_better,
+    }
+    unknowns: list[str] = []
+    if not metric:
+        status["status"] = "invalid_config"
+        unknowns.append("baseline.metric is required when baseline.required is true")
+        return status, True, unknowns
+
+    baseline_entries = [entry for entry in entries if str(entry.get("role") or "") == "baseline"]
+    experiment_entries = [entry for entry in entries if str(entry.get("role") or "experiment") != "baseline"]
+    if not baseline_entries:
+        status["status"] = "missing_required_baseline"
+        return status, True, unknowns
+
+    baseline_values = metric_values(baseline_entries, metric, split)
+    if not baseline_values:
+        status["status"] = "missing_baseline_metric"
+        unknowns.append(f"no baseline values for metric {metric} on split {split}")
+        return status, True, unknowns
+
+    observed_values = metric_values(experiment_entries, metric, split)
+    if not observed_values:
+        status["status"] = "missing_experiment_metric"
+        unknowns.append(f"no experiment values for metric {metric} on split {split}")
+        return status, True, unknowns
+
+    baseline_value = aggregate(baseline_values, aggregation)
+    observed_value = aggregate(observed_values, aggregation)
+    required_value = baseline_value + min_delta if higher_is_better else baseline_value - min_delta
+    passed = observed_value >= required_value if higher_is_better else observed_value <= required_value
+    status.update({
+        "baseline": baseline_value,
+        "observed": observed_value,
+        "required_value": required_value,
+        "status": "pass" if passed else "failed_baseline_comparison",
+    })
+    return status, not passed, unknowns
+
+
+def _lookup(row: dict[str, str], *names: str) -> str:
+    lowered = {key.lower(): value for key, value in row.items()}
+    for name in names:
+        value = lowered.get(name.lower())
+        if value:
+            return value.strip()
+    return ""
+
+
+def claim_level_rank(level: str) -> int | None:
+    return CLAIM_LEVELS.get(level.strip().lower())
+
+
+def evaluate_claim_support(review_text: str, claim_boundary: dict[str, Any]) -> tuple[dict[str, Any], bool, list[str]]:
+    rows = [
+        row for row in parse_markdown_tables(review_text)
+        if _lookup(row, "claim_id", "claim id", "id") or "结论与证据" in str(row.get("_section") or "")
+    ]
+    status: dict[str, Any] = {
+        "required": True,
+        "status": "not_reviewed",
+        "claims_checked": 0,
+        "unsupported_claims": [],
+        "prohibited_claims": [],
+        "boundary_violations": [],
+        "malformed_claims": [],
+    }
+    unknowns: list[str] = []
+    if not rows:
+        unknowns.append("ai_evidence_review.md has no claim support table")
+        return status, True, unknowns
+
+    max_level = str(claim_boundary.get("max_claim_level") or "exploratory").strip().lower()
+    max_rank = claim_level_rank(max_level)
+    if max_rank is None:
+        unknowns.append(f"claim_boundary.yaml max_claim_level is unknown: {max_level}")
+        max_rank = -1
+
+    status["claims_checked"] = len(rows)
+    for index, row in enumerate(rows, 1):
+        claim_id = _lookup(row, "claim_id", "claim id", "id") or f"claim-{index}"
+        conclusion = _lookup(row, "结论", "claim", "conclusion")
+        level = _lookup(row, "等级", "证据等级", "level", "evidence_level").lower()
+        evidence = _lookup(row, "证据", "evidence")
+        support = _lookup(row, "状态", "status").lower()
+        if not conclusion or not level or not support:
+            status["malformed_claims"].append(claim_id)
+            continue
+        if support == "unsupported":
+            status["unsupported_claims"].append(claim_id)
+        elif support == "prohibited":
+            status["prohibited_claims"].append(claim_id)
+        elif support != "supported":
+            status["malformed_claims"].append(claim_id)
+        if support == "supported" and evidence.lower() in {"", "none", "n/a", "na"}:
+            status["unsupported_claims"].append(claim_id)
+        rank = claim_level_rank(level)
+        if rank is None:
+            status["malformed_claims"].append(claim_id)
+        elif rank > max_rank:
+            status["boundary_violations"].append(claim_id)
+
+    blocks = any(status[key] for key in ("unsupported_claims", "prohibited_claims", "boundary_violations", "malformed_claims"))
+    status["status"] = "fail" if blocks else "pass"
+    return status, blocks, unknowns
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run deterministic audit for current research evidence.")
     add_common_args(parser)
@@ -195,6 +325,7 @@ def main() -> int:
     protocol = load_current_yaml(root, "protocol.lock.yaml")
     blocked = load_current_yaml(root, "blocked_actions.yaml")
     hypothesis = load_current_yaml(root, "hypothesis.yaml")
+    claim_boundary = load_current_yaml(root, "claim_boundary.yaml")
     entries = load_jsonl(cur / "evidence_ledger.jsonl")
 
     checks: list[dict[str, Any]] = []
@@ -214,6 +345,12 @@ def main() -> int:
         protocol_violations.append("protocol.lock.yaml digest differs from compiled goal state")
     elif not expected_digest:
         unknowns.append("state.yaml has no protocol_digest; run arx_compile_goal.py")
+    compiled_at = state.get("compiled_at")
+    compiled_dt = parse_timestamp(compiled_at)
+    if not compiled_at:
+        unknowns.append("state.yaml has no compiled_at; run arx_compile_goal.py")
+    elif compiled_dt is None:
+        unknowns.append("state.yaml compiled_at is not a valid timestamp")
 
     allowed_splits = [str(x) for x in listify(protocol.get("allowed_splits"))]
     forbidden_splits = [str(x) for x in listify(protocol.get("forbidden_splits"))]
@@ -227,6 +364,11 @@ def main() -> int:
         metrics = entry.get("metrics") or {}
         if not command:
             evidence_violations.append(f"record {index} missing command")
+        entry_dt = parse_timestamp(entry.get("timestamp"))
+        if compiled_dt and entry_dt and entry_dt < compiled_dt:
+            protocol_violations.append(f"record {index} predates compiled protocol")
+        elif compiled_dt and entry_dt is None:
+            evidence_violations.append(f"record {index} missing valid timestamp")
         if require_seed and entry.get("seed") is None:
             evidence_violations.append(f"record {index} missing seed")
         if allowed_splits and data_split and data_split not in allowed_splits and data_split not in forbidden_splits:
@@ -260,6 +402,8 @@ def main() -> int:
 
     gate_passed, gate_results, gate_unknowns = evaluate_gates(protocol, entries)
     unknowns.extend(gate_unknowns)
+    baseline_status, baseline_blocks_promote, baseline_unknowns = evaluate_baseline(protocol, entries)
+    unknowns.extend(baseline_unknowns)
 
     violations.extend(evidence_violations)
     violations.extend(protocol_violations)
@@ -268,6 +412,8 @@ def main() -> int:
 
     review_path = cur / "ai_evidence_review.md"
     review_text = read_text(review_path) if review_path.exists() else ""
+    claim_support_status, claim_blocks_promote, claim_unknowns = evaluate_claim_support(review_text, claim_boundary)
+    unknowns.extend(claim_unknowns)
     blocked_for_spiral = blocked_patterns(load_current_yaml(root, "blocked_actions.yaml"))
     spiral_budget = protocol.get("spiral_budget") or {}
     spiral_risk = compute_spiral_risk(entries, review_text, blocked_for_spiral, spiral_budget)
@@ -275,8 +421,13 @@ def main() -> int:
     forbidden_decisions: list[str] = []
     if not evidence_valid or protocol_violation or test_contamination or not gate_passed:
         forbidden_decisions.append("promote")
+    if baseline_blocks_promote:
+        forbidden_decisions.append("promote")
+    if claim_blocks_promote:
+        forbidden_decisions.append("promote")
     if spiral_risk.get("level") == "critical":
         forbidden_decisions.append("promote")
+    forbidden_decisions = sorted(set(forbidden_decisions))
 
     report = {
         "audit_version": 1,
@@ -286,6 +437,8 @@ def main() -> int:
         "protocol_violation": protocol_violation,
         "test_contamination": test_contamination,
         "validation_gate_passed": gate_passed,
+        "baseline_status": baseline_status,
+        "claim_support_status": claim_support_status,
         "spiral_risk": spiral_risk,
         "forbidden_decisions": forbidden_decisions,
         "checks": checks,

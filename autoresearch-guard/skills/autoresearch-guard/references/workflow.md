@@ -36,19 +36,19 @@
 | 2 | S2 MCP / arXiv MCP 搜论文 + WebSearch 搜现有实现，编写 `literature_review.md` | ≥1 candidate_idea + ≥1 existing_implementation，每个有证据链接 |
 | 3 | AI 编写 `hypothesis.yaml`，含 `evidence_basis` 与 `reuse_plan` | 必填字段已填 |
 | 4 | AI 编写 `protocol.lock.yaml`（含 `spiral_budget`）；人工设 `locked: true` | 协议已锁定 |
-| 5 | `arx_compile_goal.py` 校验 reuse 字段并渲染 `active_goal.md` | goal 已生成；`state.yaml` 含 `protocol_digest` |
+| 5 | `arx_compile_goal.py` 校验 prior art / reuse 绑定并渲染 `active_goal.md` | goal 已生成；`state.yaml` 含 `protocol_digest` 与 `compiled_at` |
 | 6 | 将 `active_goal.md` 用作 `/goal` 正文 | — |
 | 7 | 在 `/goal` 内做研究，优先复用 `reuse_plan.base` 指定实现 | — |
-| 8 | 每次有意义实验后 `arx_record.py` | `evidence_ledger.jsonl` 有记录 |
-| 9 | `arx_audit.py`（含 `spiral_risk`） | `audit_report.yaml` 已写出（有违规时 exit 1，报告仍生成） |
-| 10 | AI 编写 `ai_evidence_review.md`；`spiral_risk` 非 none 时含「死胡同评估」节 | 无 `TBD by AI` |
-| 11 | AI 编写 `decision.proposed.yaml`；critical 时含 `spiral_response` | 含 `decision` 与 `reason` |
+| 8 | 每次有意义实验后 `arx_record.py`；baseline 证据用 `--role baseline` | `evidence_ledger.jsonl` 有记录 |
+| 9 | `arx_audit.py`（含 baseline、claim support、`spiral_risk`） | `audit_report.yaml` 已写出（有违规时 exit 1，报告仍生成） |
+| 10 | AI 编写 `ai_evidence_review.md` 的「结论与证据」claim 表；`spiral_risk` 非 none 时含「死胡同评估」节 | 无 `TBD by AI` |
+| 11 | 重新运行 `arx_audit.py`，然后 AI 编写 `decision.proposed.yaml`；critical 时含 `spiral_response` | audit 已包含 claim support；proposal 含 `decision` 与 `reason` |
 | 12 | `arx_decide.py`（escape gate） | `decision.yaml` 已提交 |
 | 13 | **closure**：更新 `lessons/`（有失败时强制）；编写 `next_goal.md`；或 `arx_archive.py` | 见「Closure 与迭代衔接」 |
 
 ## Closure 与迭代衔接
 
-`stop_goal_guard` 与 `arx_archive` 共用核心 closure 清单：
+`stop_goal_guard` 只在 `.research/current/state.yaml` 的 `hooks_enabled: true` 时生效。启用后，它与 `arx_archive` 共用核心 closure 清单：
 
 - `evidence_ledger.jsonl`（至少一条记录）
 - `audit_report.yaml`
@@ -80,15 +80,15 @@
 | `literature_review.md` | `arx_init` 占位 | compile、AI | 步骤 2 AI | compile 校验被引用 |
 | `lessons/retained_lessons.md` | `arx_init` 空壳 | 步骤 1 | 步骤 13 AI | 否 |
 | `lessons/anti_patterns.yaml` | `arx_init` 空壳 | 步骤 1 | 步骤 13 AI | 失败时 closure 强制含本轮 id |
-| `state.yaml` | `arx_init` | 审计、status | `arx_compile_goal` 更新 digest | digest |
+| `state.yaml` | `arx_init` | 审计、status、hook | `arx_compile_goal` 更新 digest 与 compiled_at；初始化时写入 `hooks_enabled` | digest + 时间线 + hook 开关 |
 | `hypothesis.yaml` | `arx_init` 模板 | 全流程 | 步骤 3 AI | compile 校验必填 + reuse 字段 |
 | `protocol.lock.yaml` | `arx_init` 模板 | 全流程 | 步骤 4 AI；锁定后 hook 拦截写入 | 锁定后 hook + 审计 digest |
 | `blocked_actions.yaml` | `arx_init` | goal、审计、hook | AI（锁定前） | hook + 审计 |
 | `claim_boundary.yaml` | `arx_init` | goal、status | AI | 否（仅编入 goal） |
 | `active_goal.md` | `arx_compile_goal` | Codex `/goal` | 脚本 | 否 |
-| `evidence_ledger.jsonl` | `arx_init` 空文件 | 审计、closure | `arx_record` | closure 要求非空 |
-| `audit_report.yaml` | `arx_audit` | decide、status | `arx_audit` | closure 要求存在 |
-| `ai_evidence_review.md` | `arx_init` 占位 | closure、audit 扫标签 | 步骤 10 AI | closure 要求有意义 |
+| `evidence_ledger.jsonl` | `arx_init` 空文件 | 审计、closure | `arx_record` | closure 要求非空；baseline role 可审计 |
+| `audit_report.yaml` | `arx_audit` | decide、status | `arx_audit` | closure 要求存在；禁非法 promote |
+| `ai_evidence_review.md` | `arx_init` 占位 | closure、audit 扫 claim 表 | 步骤 10 AI | closure 要求有意义；claim 表影响 promote |
 | `decision.proposed.yaml` | AI 手写 | `arx_decide` | 步骤 11 AI | — |
 | `decision.yaml` | `arx_decide` | archive、status | `arx_decide` | closure 要求存在 |
 | `next_goal.md` | `arx_init` 占位 | 下一轮 init | 步骤 13 AI | 否 |
@@ -97,14 +97,14 @@
 
 | 机制 | 强制内容 | 不强制 |
 |------|----------|--------|
-| `arx_compile_goal` | hypothesis 必填字段 + `evidence_basis` + `reuse_plan`（`build_new` 需 reason） | 新颖性、reuse 合理性 |
-| `arx_audit` | 证据完整性、协议 digest、划分污染、blocked actions、validation gates；`spiral_risk` 信号；违规禁 `promote` | 论断措辞、标签语义、是否真死胡同 |
+| `arx_compile_goal` | hypothesis 必填字段 + `evidence_basis` 必须匹配 `idea_id` + `reuse_plan.base` 必须匹配实现表（`build_new` 需 reason） | 新颖性、reuse 合理性 |
+| `arx_audit` | 证据完整性、协议 digest、协议时间线、baseline、划分污染、blocked actions、validation gates、claim support 表；`spiral_risk` 信号；违规禁 `promote` | 论断措辞的科学真实性、是否真死胡同 |
 | `arx_decide` | `decision` 合法性、`forbidden_decisions`；critical 时要求 `spiral_response` 且禁 proceed（除非反驳 + `requires_human`） | `requires_human` 的实际人工确认 |
-| `pre_tool_command_gate` | forbidden splits、blocked patterns、锁定后 protocol 写入 | 锁定后修改 hypothesis / claim_boundary |
-| `stop_goal_guard` | closure 四件套 + 非空 ledger；失败时 lessons 含本轮 id | `next_goal.md`、成功时 lessons |
+| `pre_tool_command_gate` | `hooks_enabled: true` 时检查 forbidden splits、blocked patterns、锁定后 protocol 写入 | 锁定后修改 hypothesis / claim_boundary |
+| `stop_goal_guard` | `hooks_enabled: true` 时检查 closure 四件套 + 非空 ledger；失败时 lessons 含本轮 id | `next_goal.md`、成功时 lessons |
 | AI + 人工 | 科学判断、失败归因、死胡同判定、论断措辞、lessons 内容、reuse 决策 | — |
 
-`arx_record` 的 `--iteration-id` 应与 `hypothesis.yaml` 一致；脚本不交叉校验，由 AI 保证。
+`arx_record` 的 `--iteration-id` 应与 `hypothesis.yaml` 一致；脚本不交叉校验，由 AI 保证。baseline 记录必须显式使用 `--role baseline`，否则会被当作普通实验记录。
 
 ## 不变量
 
@@ -163,6 +163,8 @@ arXiv：搜索、下载、读取已下载论文等工具，具体名称以 `arxi
 MCP server 启动失败或被禁用时，Literature 阶段降级为 WebSearch 搜论文摘要与 arXiv 页；`existing_implementations` 始终用 WebSearch 搜 GitHub。
 
 ## Hooks 附录
+
+Hooks 是项目级 opt-in，不是安装即启用。`arx_init.py` 默认写入 `hooks_enabled: false`；只有运行 `arx_init.py --enable-hooks ...`，或人工把 `.research/current/state.yaml` 改为 `hooks_enabled: true` 后，下面这些 hook 才会执行门禁逻辑。未启用时它们必须 exit 0 且 stdout 为空。
 
 `hooks/hooks.json` 中的 command 必须使用 Codex 内联变量 `${PLUGIN_ROOT}`，指向插件安装目录（cache 或 marketplace 副本）。不要用 `$PLUGIN_ROOT`（PowerShell 会当成空环境变量）、不要用 `./hooks/...`（会从项目 cwd 解析，找不到脚本）。
 

@@ -27,6 +27,23 @@ def utc_now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def parse_timestamp(value: Any) -> _dt.datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = _dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+    return parsed.astimezone(_dt.timezone.utc)
+
+
 def slug(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip("-._")
     return value or "iteration"
@@ -318,6 +335,45 @@ def markdown_list(values: Iterable[Any], empty: str = "- none") -> str:
     return "\n".join(f"- {v}" for v in values)
 
 
+def _split_markdown_table_row(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_markdown_separator(line: str) -> bool:
+    cells = _split_markdown_table_row(line)
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell or "") for cell in cells)
+
+
+def parse_markdown_tables(text: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    lines = text.splitlines()
+    section = ""
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if stripped.startswith("#"):
+            section = stripped.lstrip("#").strip()
+            index += 1
+            continue
+        if (
+            stripped.startswith("|")
+            and index + 1 < len(lines)
+            and lines[index + 1].strip().startswith("|")
+            and _is_markdown_separator(lines[index + 1])
+        ):
+            headers = _split_markdown_table_row(stripped)
+            index += 2
+            while index < len(lines) and lines[index].strip().startswith("|"):
+                cells = _split_markdown_table_row(lines[index])
+                item = {headers[i]: cells[i] if i < len(cells) else "" for i in range(len(headers))}
+                item["_section"] = section
+                rows.append(item)
+                index += 1
+            continue
+        index += 1
+    return rows
+
+
 def extract_dotted(data: Any, path: str) -> Any:
     value = data
     for part in path.split("."):
@@ -372,6 +428,14 @@ def contains_pattern(command: str, pattern: str) -> bool:
 
 def load_current_yaml(research_root: str | Path, name: str) -> dict[str, Any]:
     return load_yaml(current_dir(research_root) / name)
+
+
+def research_hooks_enabled(research_root: str | Path) -> bool:
+    try:
+        state = load_current_yaml(research_root, "state.yaml")
+    except Exception:
+        return False
+    return state.get("hooks_enabled") is True
 
 
 def fail(message: str, code: int = 1) -> None:

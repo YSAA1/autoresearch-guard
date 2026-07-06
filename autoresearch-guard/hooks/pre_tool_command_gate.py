@@ -10,7 +10,7 @@ PLUGIN_ROOT = SCRIPT_DIR.parent
 COMMON = PLUGIN_ROOT / "skills" / "autoresearch-guard" / "scripts"
 sys.path.insert(0, str(COMMON))
 
-from arx_common import command_mentions_split, contains_pattern, current_dir, listify, load_current_yaml  # noqa: E402
+from arx_common import command_mentions_split, contains_pattern, listify, load_current_yaml, research_hooks_enabled  # noqa: E402
 
 
 def payload_from_stdin() -> dict:
@@ -77,6 +77,8 @@ def main() -> int:
 
     research_root = find_research_root(cwd)
     if research_root is None:
+        return 0
+    if not research_hooks_enabled(research_root):
         return 0
 
     protocol = load_current_yaml(research_root, "protocol.lock.yaml")

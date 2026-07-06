@@ -2,3 +2,5 @@ interface:
   display_name: "AutoResearch Guard"
   short_description: "运行证据约束的研究 /goal 循环。"
   default_prompt: "$autoresearch-guard Prepare a guarded research /goal loop for this project."
+policy:
+  allow_implicit_invocation: false

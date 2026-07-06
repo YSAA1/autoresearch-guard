@@ -11,7 +11,7 @@ PLUGIN_ROOT = SCRIPT_DIR.parent
 COMMON = PLUGIN_ROOT / "skills" / "autoresearch-guard" / "scripts"
 sys.path.insert(0, str(COMMON))
 
-from arx_common import utc_now  # noqa: E402
+from arx_common import research_hooks_enabled  # noqa: E402
 
 
 def payload_from_stdin() -> dict:
@@ -66,6 +66,8 @@ def main() -> int:
 
     research_root = find_research_root(cwd)
     if research_root is None or not command:
+        return 0
+    if not research_hooks_enabled(research_root):
         return 0
 
     if likely_experiment(command):

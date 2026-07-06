@@ -36,6 +36,7 @@ def main() -> int:
     parser.add_argument("--hypothesis", default="TBD by AI", help="Initial hypothesis placeholder or AI-authored hypothesis")
     parser.add_argument("--archive-existing", action="store_true", help="Move existing current/ to archive before initializing")
     parser.add_argument("--force", action="store_true", help="Overwrite existing current files in place")
+    parser.add_argument("--enable-hooks", action="store_true", help="Enable AutoResearch Guard hooks for this .research state")
     args = parser.parse_args()
 
     root = Path(args.research_root).resolve()
@@ -63,6 +64,7 @@ def main() -> int:
         "title": yaml_dq_content(args.title),
         "objective": yaml_dq_content(args.objective),
         "hypothesis": yaml_dq_content(args.hypothesis),
+        "hooks_enabled": "true" if args.enable_hooks else "false",
     }
 
     files = {
@@ -94,6 +96,7 @@ def main() -> int:
     print(f"Initialized AutoResearch Guard state at {root}")
     print(created)
     print("Protocol starts unlocked. Human must set locked: true before arx_compile_goal.py runs without --allow-unlocked.")
+    print(f"Hooks enabled: {str(args.enable_hooks).lower()}")
     return 0
 
 

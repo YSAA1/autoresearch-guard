@@ -43,6 +43,7 @@ def main() -> int:
     parser.add_argument("--metric", action="append", default=[], help="Metric as KEY=VALUE, repeatable")
     parser.add_argument("--metric-from-json", action="append", default=[], help="Metric as NAME=path.to.value from --result-file JSON")
     parser.add_argument("--code-ref", default="unknown")
+    parser.add_argument("--role", default="experiment", choices=["experiment", "baseline"], help="Evidence role for audit gates")
     parser.add_argument("--status", default="recorded", choices=["recorded", "pass", "fail", "error"])
     parser.add_argument("--notes", default="")
     args = parser.parse_args()
@@ -90,6 +91,7 @@ def main() -> int:
         "result_digest": result_digest,
         "metrics": metrics,
         "code_ref": args.code_ref,
+        "role": args.role,
         "status": args.status,
         "notes": args.notes,
     }
