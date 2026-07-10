@@ -1,32 +1,56 @@
 from __future__ import annotations
 
-from hook_runtime import additional_context, emit, find_research_root, read_event, system_warning
+import json
+import sys
+from pathlib import Path
+from typing import Any
 
-from arx_lifecycle import evaluate_readiness, load_lifecycle_state
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "autoresearch-guard" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+from arx_core import research_root_for, status_report  # noqa: E402
+
+
+def _event_cwd() -> Path:
+    try:
+        raw = sys.stdin.read().strip() if not sys.stdin.isatty() else ""
+        payload: Any = json.loads(raw) if raw else {}
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    if isinstance(payload, dict) and payload.get("cwd"):
+        return Path(str(payload["cwd"])).expanduser().resolve()
+    return Path.cwd().resolve()
 
 
 def main() -> int:
-    event = read_event()
-    research_root = find_research_root(event.cwd)
-    if research_root is None:
+    root = research_root_for(_event_cwd())
+    if not root.is_dir():
         return 0
     try:
-        state = load_lifecycle_state(research_root)
-        if state.get("hooks_enabled") is not True:
+        report, _status_code = status_report(root)
+        if report["state"] == "idle":
             return 0
-        report = evaluate_readiness(research_root)
-        owner = str((state.get("loop") or {}).get("owner_session_id") or "")
-        relation = "owner" if owner and owner == event.session_id else ("unbound" if not owner else "non-owner")
-        next_action = (report.get("next_actions") or ["run arx_loop.py check --json"])[0]
+        session = report["session"] or {}
+        goal = session.get("goal") or "未命名研究"
         message = (
-            f"AutoResearch Guard recovery state: iteration={report.get('iteration_id')}; "
-            f"phase={report.get('phase')}; status={report.get('status')}; outcome={report.get('outcome')}; "
-            f"session_relation={relation}; state_digest={report.get('state_digest')}; next={next_action}. "
-            "Read .research/current/state.yaml and run arx_loop.py check --json before changing research state."
+            f"AutoResearch Guard：发现 {report['state']} 研究（目标：{goal}）。"
+            "在修改研究状态前，请运行 arx status --json。"
         )
-        emit(additional_context("SessionStart", message))
-    except Exception as exc:
-        emit(system_warning(f"AutoResearch Guard recovery context could not be loaded: {exc}"))
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "SessionStart",
+                        "additionalContext": message,
+                    }
+                },
+                ensure_ascii=False,
+            )
+        )
+    except Exception:
+        # SessionStart 只提供可选上下文。任何读取问题都不得影响宿主会话。
+        return 0
     return 0
 
 
