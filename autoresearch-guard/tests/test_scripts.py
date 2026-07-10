@@ -34,7 +34,7 @@ class ScriptFlowTest(unittest.TestCase):
             for entry in entries:
                 hooks.extend(entry["hooks"])
 
-        self.assertEqual(len(hooks), 3)
+        self.assertEqual(len(hooks), 4)
         fake_project = PLUGIN_ROOT.parent
         for hook in hooks:
             command = hook["command"]
@@ -160,15 +160,19 @@ class ScriptFlowTest(unittest.TestCase):
             )
             self.assert_ok(record)
 
-            audit = self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
-            self.assert_ok(audit)
+            self.assert_ok(self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd))
             audit_text = (research / "current" / "audit_report.yaml").read_text(encoding="utf-8")
             self.assertIn("validation_gate_passed: true", audit_text)
 
             (research / "current" / "ai_evidence_review.md").write_text(
-                "# AI Evidence Review\n\nEvidence supports continuing validation only.\n",
+                "# AI Evidence Review\n\n"
+                "## 结论与证据\n\n"
+                "| claim_id | 结论 | 等级 | 证据 | 状态 |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| c1 | Evidence supports continuing validation only | exploratory | ledger:demo-i1 | supported |\n",
                 encoding="utf-8",
             )
+            self.assert_ok(self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd))
             (research / "current" / "decision.proposed.yaml").write_text(
                 "decision: refine\nreason: validation gate passed but this remains validation-only evidence\nnext_goal_type: refine_experiment\nrequires_human: true\n",
                 encoding="utf-8",
@@ -176,6 +180,10 @@ class ScriptFlowTest(unittest.TestCase):
             decide = self.run_script("arx_decide.py", "--research-root", str(research), cwd=cwd)
             self.assert_ok(decide)
             self.assertTrue((research / "current" / "decision.yaml").exists())
+            (research / "current" / "next_goal.md").write_text(
+                "# Next Goal\n\nRun the next bounded validation iteration.\n",
+                encoding="utf-8",
+            )
 
             status = self.run_script("arx_status.py", "--research-root", str(research), "--json", cwd=cwd)
             self.assert_ok(status)
@@ -429,9 +437,6 @@ class ScriptFlowTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            ok = self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
-            self.assert_ok(ok)
-
             hypothesis = research / "current" / "hypothesis.yaml"
             hypothesis.write_text(
                 "iteration_id: t-i1\nobjective: o\nhypothesis: h\n"
@@ -452,6 +457,15 @@ class ScriptFlowTest(unittest.TestCase):
             missing_impl = self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
             self.assertNotEqual(missing_impl.returncode, 0, missing_impl.stdout + missing_impl.stderr)
             self.assertIn("reuse_plan.base", missing_impl.stderr)
+
+            hypothesis.write_text(
+                "iteration_id: t-i1\nobjective: o\nhypothesis: h\n"
+                "evidence_basis: idea-1\n"
+                "reuse_plan:\n  base: https://github.com/example/repo\n  build_new_reason: \"\"\n",
+                encoding="utf-8",
+            )
+            ok = self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
+            self.assert_ok(ok)
 
     def test_audit_forbids_promote_when_required_baseline_is_missing(self) -> None:
         test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
@@ -556,6 +570,14 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertIn("status: failed_baseline_comparison", report)
             self.assertIn("- promote", report)
 
+            self.assert_ok(self.run_script(
+                "arx_loop.py",
+                "resume",
+                "--research-root", str(research),
+                "--reason", "collect a stronger bounded experiment",
+                "--reopen-execution",
+                cwd=cwd,
+            ))
             self.assert_ok(self.run_script(
                 "arx_record.py",
                 "--research-root", str(research),
@@ -794,7 +816,7 @@ class ScriptFlowTest(unittest.TestCase):
                     cwd=cwd,
                 )
                 self.assert_ok(rec)
-            audit = self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
+            self.assert_ok(self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd))
             report = (research / "current" / "audit_report.yaml").read_text(encoding="utf-8")
             self.assertIn("spiral_risk:", report)
             self.assertIn("level: critical", report)
@@ -821,8 +843,14 @@ class ScriptFlowTest(unittest.TestCase):
                 )
             self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
             (research / "current" / "ai_evidence_review.md").write_text(
-                "# Review\n\nno_signal observed.\n", encoding="utf-8",
+                "# Review\n\nno_signal observed.\n\n"
+                "## 结论与证据\n\n"
+                "| claim_id | 结论 | 等级 | 证据 | 状态 |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| c1 | Repeated attempts produced no signal | exploratory | ledger:esc-i1 | supported |\n",
+                encoding="utf-8",
             )
+            self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
             # proceed without spiral_response -> rejected
             (research / "current" / "decision.proposed.yaml").write_text(
                 "decision: proceed\nreason: try again\n", encoding="utf-8",
@@ -859,8 +887,14 @@ class ScriptFlowTest(unittest.TestCase):
             )
             self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
             (research / "current" / "ai_evidence_review.md").write_text(
-                "# Review\n\nimplementation_bug.\n", encoding="utf-8",
+                "# Review\n\nimplementation_bug.\n\n"
+                "## 结论与证据\n\n"
+                "| claim_id | 结论 | 等级 | 证据 | 状态 |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| c1 | The recorded attempt failed | exploratory | ledger:fail-i1 | supported |\n",
+                encoding="utf-8",
             )
+            self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
             (research / "current" / "decision.proposed.yaml").write_text(
                 "decision: stop\nreason: done\nspiral_response: none\n", encoding="utf-8",
             )

@@ -1,8 +1,22 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"${PLUGIN_ROOT}/hooks/session_recovery.py\"",
+            "timeout": 10,
+            "statusMessage": "Loading AutoResearch Guard recovery state",
+            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\session_recovery.py\""
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|apply_patch|Edit|Write",
         "hooks": [
           {
             "type": "command",

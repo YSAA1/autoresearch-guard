@@ -2,6 +2,8 @@
 
 日期：2026-06-30
 
+> 状态：历史设计记录。2026-07-10 的 loop-engineering 重构已改变状态机、hooks、预算、digest 和归档行为；当前契约见 `autoresearch-guard/skills/autoresearch-guard/references/loop_contract.md`，执行计划见 `docs/plans/2026-07-10--loop-engineering-redesign-plan.md`。
+
 ## 先纠偏
 
 你刚才指出的问题是准确的：上一版把“降低心智负担”写成了主目标，这会跑偏。

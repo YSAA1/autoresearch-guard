@@ -8,33 +8,38 @@ from arx_common import (
     DECISIONS,
     add_common_args,
     current_dir,
-    load_current_yaml,
     load_yaml,
+    read_text,
+    research_lock,
     sha256_file,
     utc_now,
     write_yaml,
 )
+from arx_lifecycle import audit_is_fresh, decision_policy_errors, mark_closure, require_phase
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Check and commit an AI-proposed research decision.")
-    add_common_args(parser)
-    parser.add_argument("--proposed", help="Path to proposed decision YAML; defaults to current/decision.proposed.yaml")
-    parser.add_argument("--decision", choices=sorted(DECISIONS), help="Build a proposal from CLI fields")
-    parser.add_argument("--reason", default="")
-    parser.add_argument("--next-goal-type", default="")
-    parser.add_argument("--requires-human", action="store_true")
-    args = parser.parse_args()
-
-    root = Path(args.research_root).resolve()
-    cur = current_dir(root)
+def run_decide(root: Path, cur: Path, args: argparse.Namespace) -> int:
     if not cur.exists():
         raise ArxError(f"missing current directory: {cur}")
+    state = require_phase(root, "decide", {"review"})
 
     audit_path = cur / "audit_report.yaml"
     if not audit_path.exists():
         raise ArxError("audit_report.yaml missing; run arx_audit.py first")
     audit = load_yaml(audit_path)
+    fresh, stale_inputs = audit_is_fresh(root, audit)
+    if not fresh:
+        raise ArxError(
+            "audit_report.yaml is stale for: " + ", ".join(stale_inputs) + "; rerun arx_audit.py"
+        )
+
+    review_path = cur / "ai_evidence_review.md"
+    review_text = read_text(review_path).strip() if review_path.exists() else ""
+    claim_status = audit.get("claim_support_status") or {}
+    if not review_text or "TBD by AI" in review_text or int(claim_status.get("claims_checked") or 0) <= 0:
+        raise ArxError(
+            "ai_evidence_review.md is incomplete; finish the review and claim table, then rerun arx_audit.py"
+        )
 
     if args.decision:
         proposal = {
@@ -49,35 +54,41 @@ def main() -> int:
             raise ArxError(f"missing proposed decision: {proposed_path}")
         proposal = load_yaml(proposed_path)
 
+    audit_digest = sha256_file(audit_path)
+    if str(state.get("audit_digest") or "") != audit_digest:
+        raise ArxError("audit_report.yaml changed after audit; rerun arx_audit.py")
+    policy_errors = decision_policy_errors(audit, proposal, state, audit_digest=audit_digest)
+    if policy_errors:
+        raise ArxError("invalid decision proposal: " + "; ".join(policy_errors))
     decision = str(proposal.get("decision") or "")
-    if decision not in DECISIONS:
-        raise ArxError(f"invalid decision {decision}; expected one of {sorted(DECISIONS)}")
-    if not proposal.get("reason"):
-        raise ArxError("decision proposal must include reason")
-
-    forbidden = {str(x) for x in (audit.get("forbidden_decisions") or [])}
-    if decision in forbidden:
-        raise ArxError(f"invalid decision: {decision} is forbidden by audit_report.yaml")
-
-    spiral_level = ""
-    spiral = audit.get("spiral_risk") or {}
-    if isinstance(spiral, dict):
-        spiral_level = str(spiral.get("level") or "none")
-    if spiral_level == "critical":
-        spiral_response = str(proposal.get("spiral_response") or "").strip()
-        if not spiral_response:
-            raise ArxError("spiral_risk is critical; decision.proposed.yaml must include non-empty spiral_response")
-        if decision == "proceed" and not proposal.get("requires_human"):
-            raise ArxError("spiral_risk is critical; 'proceed' requires requires_human: true plus spiral_response")
 
     committed = dict(proposal)
     committed["committed_at"] = utc_now()
-    committed["audit_report"] = str(audit_path.resolve())
-    committed["audit_digest"] = sha256_file(audit_path)
-    write_yaml(cur / "decision.yaml", committed)
+    committed["audit_report"] = "audit_report.yaml"
+    committed["audit_digest"] = audit_digest
+    committed["input_digests"] = audit.get("input_digests") or {}
+    decision_path = cur / "decision.yaml"
+    write_yaml(decision_path, committed)
+    mark_closure(root, decision_digest=sha256_file(decision_path))
     print(f"Committed decision: {decision}")
     print(cur / "decision.yaml")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Check and commit an AI-proposed research decision.")
+    add_common_args(parser)
+    parser.add_argument("--proposed", help="Path to proposed decision YAML; defaults to current/decision.proposed.yaml")
+    parser.add_argument("--decision", choices=sorted(DECISIONS), help="Build a proposal from CLI fields")
+    parser.add_argument("--reason", default="")
+    parser.add_argument("--next-goal-type", default="")
+    parser.add_argument("--requires-human", action="store_true")
+    args = parser.parse_args()
+
+    root = Path(args.research_root).resolve()
+    cur = current_dir(root)
+    with research_lock(root):
+        return run_decide(root, cur, args)
 
 
 if __name__ == "__main__":

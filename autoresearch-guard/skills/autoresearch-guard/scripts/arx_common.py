@@ -6,8 +6,11 @@ import hashlib
 import json
 import os
 import re
+import tempfile
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Iterator
 
 try:
     import yaml as _yaml  # type: ignore
@@ -21,6 +24,9 @@ PROMOTE_BLOCKERS = {"evidence", "protocol", "test", "gate", "blocked_action"}
 
 class ArxError(RuntimeError):
     pass
+
+
+_LOCK_STATE = threading.local()
 
 
 def utc_now() -> str:
@@ -91,7 +97,19 @@ def read_text(path: str | Path) -> str:
 def write_text(path: str | Path, content: str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8", newline="\n")
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        try:
+            Path(temporary).unlink()
+        except FileNotFoundError:
+            pass
 
 
 def append_text(path: str | Path, content: str) -> None:
@@ -99,6 +117,80 @@ def append_text(path: str | Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":
+        return
+    try:
+        descriptor = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _lock_depths() -> dict[str, int]:
+    depths = getattr(_LOCK_STATE, "depths", None)
+    if depths is None:
+        depths = {}
+        _LOCK_STATE.depths = depths
+    return depths
+
+
+@contextmanager
+def research_lock(research_root: str | Path) -> Iterator[None]:
+    """Serialize mutations for one research root, including across processes."""
+
+    root = as_path(research_root)
+    root.mkdir(parents=True, exist_ok=True)
+    lock_path = root / ".arx.lock"
+    key = str(lock_path)
+    depths = _lock_depths()
+    if depths.get(key, 0):
+        depths[key] += 1
+        try:
+            yield
+        finally:
+            depths[key] -= 1
+        return
+
+    handle = lock_path.open("a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            if lock_path.stat().st_size == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        depths[key] = 1
+        try:
+            yield
+        finally:
+            depths.pop(key, None)
+    finally:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
 
 def sha256_file(path: str | Path) -> str:
@@ -251,8 +343,12 @@ def _dump_yaml(value: Any, indent: int = 0) -> list[str]:
         lines: list[str] = []
         for key, item in value.items():
             if isinstance(item, (dict, list)):
-                lines.append(f"{pad}{key}:")
-                lines.extend(_dump_yaml(item, indent + 2))
+                if not item:
+                    empty = "[]" if isinstance(item, list) else "{}"
+                    lines.append(f"{pad}{key}: {empty}")
+                else:
+                    lines.append(f"{pad}{key}:")
+                    lines.extend(_dump_yaml(item, indent + 2))
             else:
                 lines.append(f"{pad}{key}: {_format_scalar(item)}")
         return lines
@@ -262,8 +358,12 @@ def _dump_yaml(value: Any, indent: int = 0) -> list[str]:
         lines = []
         for item in value:
             if isinstance(item, (dict, list)):
-                lines.append(f"{pad}-")
-                lines.extend(_dump_yaml(item, indent + 2))
+                if not item:
+                    empty = "[]" if isinstance(item, list) else "{}"
+                    lines.append(f"{pad}- {empty}")
+                else:
+                    lines.append(f"{pad}-")
+                    lines.extend(_dump_yaml(item, indent + 2))
             else:
                 lines.append(f"{pad}- {_format_scalar(item)}")
         return lines
@@ -305,7 +405,10 @@ def load_jsonl(path: str | Path) -> list[dict[str, Any]]:
 
 
 def append_jsonl(path: str | Path, item: dict[str, Any]) -> None:
-    append_text(path, json.dumps(item, ensure_ascii=True, sort_keys=True) + "\n")
+    path = Path(path)
+    lock_root = path.parent.parent if path.parent.name == "current" else path.parent
+    with research_lock(lock_root):
+        append_text(path, json.dumps(item, ensure_ascii=True, sort_keys=True) + "\n")
 
 
 def render_template(path: str | Path, context: dict[str, Any]) -> str:
@@ -397,12 +500,20 @@ def parse_key_value(values: list[str]) -> dict[str, Any]:
 
 
 def update_state(research_root: str | Path, **updates: Any) -> dict[str, Any]:
-    path = current_dir(research_root) / "state.yaml"
-    state = load_yaml(path)
-    state.update(updates)
-    state["updated_at"] = utc_now()
-    write_yaml(path, state)
-    return state
+    return mutate_state(research_root, lambda state: state.update(updates))
+
+
+def mutate_state(
+    research_root: str | Path,
+    mutation: Callable[[dict[str, Any]], Any],
+) -> dict[str, Any]:
+    with research_lock(research_root):
+        path = current_dir(research_root) / "state.yaml"
+        state = load_yaml(path)
+        mutation(state)
+        state["updated_at"] = utc_now()
+        write_yaml(path, state)
+        return state
 
 
 def latest_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | None:

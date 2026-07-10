@@ -14,12 +14,13 @@ from arx_common import (
     parse_markdown_tables,
     read_text,
     render_template,
+    research_lock,
     sha256_file,
     template_dir,
-    update_state,
     utc_now,
     write_text,
 )
+from arx_lifecycle import configure_execution, loop_budget_from_protocol, require_phase
 
 
 def blocked_lines(blocked: dict[str, Any]) -> list[str]:
@@ -48,6 +49,11 @@ def gate_lines(protocol: dict[str, Any]) -> list[str]:
         else:
             rows.append(str(gate))
     return rows
+
+
+def budget_lines(protocol: dict[str, Any]) -> list[str]:
+    budget = loop_budget_from_protocol(protocol)
+    return [f"{name}: {value}" for name, value in budget.items()]
 
 
 def _lookup(row: dict[str, str], *names: str) -> str:
@@ -103,28 +109,27 @@ def validate_literature_trace(cur: Path, hypothesis: dict[str, Any], reuse_base:
             raise ArxError("hypothesis.yaml reuse_plan.base must reference literature_review.md implementation id or url")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Compile AI-authored research state into active_goal.md.")
-    add_common_args(parser)
-    parser.add_argument("--allow-unlocked", action="store_true", help="Allow draft goal compilation before human protocol lock")
-    args = parser.parse_args()
-
-    root = Path(args.research_root).resolve()
-    cur = current_dir(root)
+def run_compile(root: Path, cur: Path, *, allow_unlocked: bool) -> int:
     if not cur.exists():
         raise ArxError(f"missing current directory: {cur}")
+    state = require_phase(root, "compile", {"draft"})
 
     hypothesis = load_current_yaml(root, "hypothesis.yaml")
     protocol = load_current_yaml(root, "protocol.lock.yaml")
     blocked = load_current_yaml(root, "blocked_actions.yaml")
     claim = load_current_yaml(root, "claim_boundary.yaml")
 
-    if not args.allow_unlocked and protocol.get("locked") is not True:
+    if not allow_unlocked and protocol.get("locked") is not True:
         raise ArxError("protocol.lock.yaml is not locked; set locked: true after human review")
 
     for field in ["iteration_id", "objective", "hypothesis", "evidence_basis"]:
         if not hypothesis.get(field):
             raise ArxError(f"hypothesis.yaml missing required field: {field}")
+    if str(hypothesis.get("iteration_id") or "") != str(state.get("iteration_id") or ""):
+        raise ArxError(
+            "hypothesis.yaml iteration_id must match canonical state.yaml iteration_id: "
+            f"{hypothesis.get('iteration_id')} != {state.get('iteration_id')}"
+        )
 
     reuse = hypothesis.get("reuse_plan") or {}
     if not isinstance(reuse, dict):
@@ -138,7 +143,7 @@ def main() -> int:
 
     protocol_path = cur / "protocol.lock.yaml"
     digest = sha256_file(protocol_path)
-    update_state(root, protocol_digest=digest, compiled_at=utc_now())
+    compiled_at = utc_now()
 
     context = {
         "iteration_id": hypothesis.get("iteration_id", ""),
@@ -154,13 +159,35 @@ def main() -> int:
         "forbidden_claims": ", ".join(str(x) for x in listify(claim.get("forbidden_claims"))) or "none",
         "must_produce_lines": markdown_list(listify(hypothesis.get("must_produce")) or listify(protocol.get("required_outputs"))),
         "validation_gate_lines": markdown_list(gate_lines(protocol)),
+        "loop_budget_lines": markdown_list(budget_lines(protocol)),
     }
 
     output = render_template(template_dir() / "active_goal.md.j2", context)
-    write_text(cur / "active_goal.md", output)
-    print(f"Wrote {cur / 'active_goal.md'}")
+    if allow_unlocked and protocol.get("locked") is not True:
+        draft = cur / "active_goal.draft.md"
+        write_text(draft, "<!-- DRAFT: protocol is not locked; this file cannot arm execution. -->\n\n" + output)
+        print(f"Wrote draft goal {draft}; lifecycle remains draft/idle")
+        return 0
+
+    with research_lock(root):
+        goal_path = cur / "active_goal.md"
+        write_text(goal_path, output)
+        configure_execution(root, protocol_digest=digest, compiled_at=compiled_at, protocol=protocol)
+    print(f"Wrote {goal_path}")
     print(f"Protocol digest: {digest}")
     return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Compile AI-authored research state into active_goal.md.")
+    add_common_args(parser)
+    parser.add_argument("--allow-unlocked", action="store_true", help="Render active_goal.draft.md without arming execution")
+    args = parser.parse_args()
+
+    root = Path(args.research_root).resolve()
+    cur = current_dir(root)
+    with research_lock(root):
+        return run_compile(root, cur, allow_unlocked=args.allow_unlocked)
 
 
 if __name__ == "__main__":

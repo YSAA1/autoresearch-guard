@@ -1,9 +1,36 @@
-version: 1
+version: 2
 iteration_id: "{{ iteration_id }}"
+phase: draft
+revision: 0
 created_at: "{{ timestamp }}"
 updated_at: "{{ timestamp }}"
 research_root: "{{ research_root }}"
 protocol_digest: ""
+audit_digest: ""
+decision_digest: ""
 compiled_at: ""
 human_gate_required: true
 hooks_enabled: {{ hooks_enabled }}
+loop:
+  status: idle
+  owner_session_id: ""
+  started_at: ""
+  pause_reason: ""
+  resume_phase: ""
+  human_approved_at: ""
+  human_approved_audit_digest: ""
+  turns_seen: 0
+  stop_continuations: 0
+  no_progress_turns: 0
+  last_turn_id: ""
+  last_progress_digest: ""
+  runtime_revision: 0
+  recent_tool_use_ids: []
+  budget:
+    max_turns: 20
+    max_attempts: 12
+    max_consecutive_failures: 3
+    max_flatline_count: 3
+    max_no_progress_turns: 2
+    max_stop_continuations: 1
+    max_wall_time_minutes: 240
