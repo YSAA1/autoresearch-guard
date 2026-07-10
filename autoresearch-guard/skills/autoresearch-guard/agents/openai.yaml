@@ -1,6 +1,6 @@
 interface:
   display_name: "AutoResearch Guard"
-  short_description: "运行证据约束的研究 /goal 循环。"
-  default_prompt: "$autoresearch-guard Prepare a guarded research /goal loop for this project."
+  short_description: "自由推进各类研究，在需要时冻结验证契约并诚实收口。"
+  default_prompt: "$autoresearch-guard 帮我开始研究，先自由推进，需要时再设计验证契约。"
 policy:
   allow_implicit_invocation: false

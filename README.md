@@ -1,192 +1,95 @@
 # AutoResearch Guard
 
-AutoResearch Guard 是一个 Codex 插件，用来约束可重复的研究循环。Codex 负责提出假设、解释证据和做研究决策；插件里的 Python 脚本负责状态迁移、证据台账、确定性审计、预算熔断和归档。
+AutoResearch Guard 是一个 Codex 插件，帮你把研究过程收得干净一点。
 
-它不自己实现 agent runner。整个系统分三层：
+研究怎么推进，不由插件规定。你可以查资料、跑代码、读仓库、写报告，或者先停下来想清楚。只有当你要把结论标为 `verified` 时，插件才要求一份冻结的检查清单，以及每项检查的通过证据。
+
+插件级 MCP 已配置 arXiv 和 Semantic Scholar。它们只是可选的信息来源，不能用时照样可以研究。
+
+## 使用方式
+
+文档里的 `arx` 指这个脚本：
+
+```bash
+python <skill-root>/scripts/arx.py
+```
+
+在要研究的项目根目录运行。它会把最小状态放在 `.research/`。
+如果从子目录运行，`arx` 会复用最近祖先目录已有的 `.research/`；找不到时才在当前目录创建新的状态。
+
+```bash
+# 先看有没有未结束的研究
+arx status --json
+
+# 开始一项新研究
+arx start --goal "比较两种缓存失效策略"
+
+# 自由完成调研、实验、代码修改或笔记整理
+
+# 如果需要严谨地声明结论，先锁定一份检查清单
+arx verify lock --file verification.json
+arx verify record --check sources --verdict pass \
+  --evidence notes/sources.md --reason "关键说法已逐项核对"
+
+# 不需要验证也可以诚实结束
+arx finish --outcome unverified --summary "完成了探索性比较，尚未做完整验证。"
+```
+
+`finish` 会自动把当前研究移到 `.research/archive/`，因此不需要单独的 archive 命令。
+
+## 验证契约
+
+模型或研究者在 lock 前自行设计检查。CLI 只接受下面这个 JSON 形状：
+
+```json
+{
+  "claim": "缓存策略 A 更适合当前服务",
+  "checks": [
+    {
+      "id": "load-test",
+      "criterion": "目标负载下 p95 延迟不回退",
+      "method": "运行基准测试并比较报告",
+      "evidence_required": "基准报告路径或链接"
+    }
+  ]
+}
+```
+
+检查 ID 必须唯一，所有字段都要有内容。契约锁定后不能被直接修改；想改变它时使用 `arx verify lock --file NEW.json --revise`。新版本不会继承旧版本的结果。
+
+每个 `pass` 都至少要有一条 `--evidence`，每个结果都要说明 `--reason`。同一条结果重复提交是 no-op；有不同内容的新结果会保留历史，最新结果决定该检查当前是否通过。
+
+只有当前契约的所有检查最新结果都是 `pass`，下面这条命令才会成功：
+
+```bash
+arx finish --outcome verified --summary "所有约定检查均已通过。"
+```
+
+其他结局不要求验证契约，但都必须写 summary：`unverified`、`inconclusive`、`stopped`、`blocked`。
+
+## 状态与恢复
 
 ```text
-Codex agent turn      宿主内部的模型/工具循环
-Codex Goal 模式       跨 turn 继续执行 active_goal.md
-Research campaign     .research 中可恢复的研究状态、证据和决策
+.research/
+├── .arx.lock
+├── current/
+│   ├── session.json
+│   └── verifications/v001.json
+└── archive/<timestamp>-<session-id>/
 ```
 
-过去由 Stop hook 反复催促的做法容易形成死循环，也会误伤无关会话。现在 Goal 模式负责续跑，Stop hook 最多纠偏一次；插件用持久预算、owner session 和统一 readiness 判定决定何时停下。
+`pause --reason` 和 `resume` 只改变研究是否可继续记录验证结果。`status --json` 固定输出 `state`、`session`、`verification`、`can_finish_verified`、`reasons` 和 `next_actions`。
 
-## 项目结构
-
-```text
-autoresearch-guard/
-├── .codex-plugin/plugin.json
-├── .mcp.json
-├── hooks/
-│   ├── hooks.json
-│   ├── hook_runtime.py
-│   ├── session_recovery.py
-│   ├── pre_tool_command_gate.py
-│   ├── post_tool_capture.py
-│   └── stop_goal_guard.py
-├── skills/autoresearch-guard/
-│   ├── SKILL.md
-│   ├── scripts/
-│   ├── templates/
-│   └── references/
-└── tests/
-```
-
-本地 marketplace 定义在 `.agents/plugins/marketplace.json`。插件声明了两个可选研究 MCP：Semantic Scholar 和 arXiv。它们通过 `uvx` 启动，因此机器上需要安装 [uv](https://docs.astral.sh/uv/)。MCP 不可用时，文献阶段可以改用 Web 搜索。
-
-## 状态机
-
-每轮研究只有一个 `.research/current/`。主阶段固定为：
-
-```text
-draft -> execution -> review -> closure -> archived
-```
-
-控制状态与研究决策分开保存。常见状态有 `idle`、`armed`、`running`、`closing`、`waiting_human`、`aborted` 和 `complete`。`decision.yaml` 中的 `promote`、`refine`、`pivot`、`proceed` 或 `stop` 不会代替控制状态。
-
-查看当前状态：
+如果目录里仍是旧版的 `state.yaml`，CLI 会报告 `legacy`，不会猜测如何迁移。确认后运行：
 
 ```bash
-python autoresearch-guard/skills/autoresearch-guard/scripts/arx_loop.py check \
-  --research-root .research --json
+arx start --goal "新的研究目标" --archive-legacy
 ```
 
-`ready: true` 才表示当前 iteration 可以归档。预算耗尽、连续失败、指标长期不动和等待人工都会停止自动续跑，但不会冒充成功。
+旧 `current` 会原样归档，并附一份简短 manifest。
 
-## 运行一轮研究
+## Hook
 
-以下命令假设当前目录是要研究的项目根目录。
+插件只注册一个只读的 `SessionStart` Hook。它发现 `.research` 后提示运行 `arx status --json`，不会拦截工具、自动续跑、写状态，或阻止会话结束。
 
-```bash
-S=autoresearch-guard/skills/autoresearch-guard/scripts
-
-python "$S/arx_init.py" \
-  --research-root .research \
-  --iteration-id demo-i1 \
-  --title "Demo" \
-  --objective "验证一个有界假设" \
-  --hypothesis "候选方法应改善 validation 指标"
-```
-
-初始化后，先填写这些文件：
-
-- `literature_review.md`：至少一个带 `idea_id` 的候选思路，以及一个现有实现。
-- `hypothesis.yaml`：`evidence_basis` 要引用该 `idea_id`；`reuse_plan.base` 要引用现有实现，或填写 `build_new` 和理由。
-- `protocol.lock.yaml`：填写划分、指标、门禁和预算，人工检查后设为 `locked: true`。
-
-未锁协议只能生成草稿，不会进入 execution：
-
-```bash
-python "$S/arx_compile_goal.py" --research-root .research --allow-unlocked
-```
-
-锁定后编译正式 Goal，并启动外层循环：
-
-```bash
-python "$S/arx_compile_goal.py" --research-root .research
-python "$S/arx_loop.py" start --research-root .research --session-id manual-demo
-```
-
-把 `.research/current/active_goal.md` 交给 Codex Goal 模式。每个有意义的实验都用稳定的 `attempt_id` 记录；同一 id 和同一内容可安全重试，同一 id 对应不同内容会被拒绝。
-
-```bash
-python "$S/arx_record.py" \
-  --research-root .research \
-  --iteration-id demo-i1 \
-  --attempt-id demo-validation-1 \
-  --command "python eval.py --split validation --seed 0" \
-  --data-split validation \
-  --seed 0 \
-  --status pass \
-  --metric score=0.73
-```
-
-第一次审计会进入 review。填写 `ai_evidence_review.md` 的 claim support 表后要再审计一次，因为 decision 必须绑定最新 review 和 ledger。Audit 和 decision 的文件 digest 都会写入 `state.yaml`；直接修改已提交产物会让 readiness 失败。
-
-```bash
-python "$S/arx_audit.py" --research-root .research
-# 填写 .research/current/ai_evidence_review.md
-python "$S/arx_audit.py" --research-root .research
-python "$S/arx_status.py" --research-root .research --review
-```
-
-如果 review 后还要补实验，必须显式回到 execution：
-
-```bash
-python "$S/arx_loop.py" resume \
-  --research-root .research \
-  --reason "补充缺失证据" \
-  --reopen-execution
-```
-
-提交决策。`refine`、`pivot` 和 `proceed` 等继续型决策还需要填写有意义的 `next_goal.md`。
-
-```bash
-python "$S/arx_decide.py" \
-  --research-root .research \
-  --decision refine \
-  --reason "当前证据支持缩小范围后再验证"
-
-# 填写 .research/current/next_goal.md
-python "$S/arx_loop.py" check --research-root .research --require-ready
-python "$S/arx_archive.py" --research-root .research
-```
-
-如果 audit 把 spiral 标为 critical，但人工仍决定 `proceed`，先暂停 review，再把批准绑定到当前 audit：
-
-```bash
-python "$S/arx_loop.py" pause \
-  --research-root .research \
-  --reason "等待人工检查 critical spiral"
-python "$S/arx_loop.py" resume \
-  --research-root .research \
-  --reason "人工批准一次有界尝试" \
-  --human-approved
-```
-
-也可以一步归档旧轮并初始化新轮。旧轮必须已经 ready：
-
-```bash
-python "$S/arx_init.py" \
-  --research-root .research \
-  --archive-existing \
-  --iteration-id demo-i2 \
-  --title "Demo I2"
-```
-
-`--force` 只用于恢复。它不会覆盖旧 `current/`，而是要求 `--force-reason`，先把未完成状态作为 recovery archive 保存。即使 `state.yaml` 缺失或损坏，原始文件和错误原因也会留在 recovery manifest 中。
-
-## Hooks
-
-Hooks 默认关闭。初始化时加 `--enable-hooks` 才会让当前 `.research` 使用它们；Codex 侧仍需 trust 对应 hook 配置。
-
-- `SessionStart` 读取当前状态并补充恢复上下文。
-- `PreToolUse` 提前拦截禁用划分、blocked action、非 owner 实验，以及对锁定协议的 Bash、apply_patch、Edit 或 Write 修改。只读查看协议不会被当成修改。
-- `PostToolUse` 只提醒调用 `arx_record.py`，不会把一次工具成功当成实验成功。
-- `Stop` 只对 owner session 生效。首次未闭环可以返回一次 `decision: block`；`stop_hook_active: true`、非 owner、后台任务和等待人工都会放行。后续 turn 若已用完 continuation 总额，或预算熔断、内部错误发生，会返回 `continue: false`。
-
-Hooks 不是安全边界。它们可能未启用、未 trust、超时，PreToolUse 也不能覆盖所有执行路径。最终门禁仍由 `arx_record.py`、`arx_audit.py`、`arx_decide.py` 和 `arx_archive.py` 重新检查。
-
-## 验证
-
-最短的可执行 smoke 会走过状态迁移、并发 ledger/audit、修改后的 audit/decision、owner hook、Stop 重入、预算熔断、raw recovery、归档失败恢复，以及含中文和空格的安装副本：
-
-```bash
-ARX_TEST_TMP=/tmp python -m unittest discover \
-  -s autoresearch-guard/tests \
-  -p 'test_loop_engineering.py' \
-  -v
-```
-
-完整验证：
-
-```bash
-ARX_TEST_TMP=/tmp python -m unittest discover -s autoresearch-guard/tests -v
-python "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" \
-  autoresearch-guard/skills/autoresearch-guard
-python "${CODEX_HOME:-$HOME/.codex}/skills/.system/plugin-creator/scripts/validate_plugin.py" \
-  autoresearch-guard
-```
-
-设计边界、已实现保证和剩余限制见 [循环契约](autoresearch-guard/skills/autoresearch-guard/references/loop_contract.md)。
+设计说明见 [docs/autoresearch-guard-design.md](docs/autoresearch-guard-design.md)。
