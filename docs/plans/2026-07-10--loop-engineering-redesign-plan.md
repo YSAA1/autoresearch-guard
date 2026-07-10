@@ -125,7 +125,7 @@ Verification path status: `runnable`
 
 ## Verification 记录
 
-Claim：当前 feature 分支已经满足 loop-engineering 重构的成功标准，可以进入提交。
+Claim：当前 feature 分支已经满足 loop-engineering 重构的成功标准，行为与文档已提交。
 
 Fresh evidence（均晚于最后一次行为改动）：
 
@@ -138,8 +138,18 @@ Fresh evidence（均晚于最后一次行为改动）：
 - Direct-writer probe：在 audit 计算中绕过 `.arx.lock` 直接修改 ledger，audit 检测到输入变化并拒绝写报告。
 - 安装副本 smoke：在含空格和中文的副本中执行 SessionStart、PreToolUse、PostToolUse 和 Stop payload，全部符合契约。
 
-Verification verdict：`PASS`。第三次 review 为 `PASS`，commit eligibility 为 `eligible`。
+Verification verdict：`PASS`。第三次 review 为 `PASS`，里程碑提交为 `3285d1c`。
 
 未验证项：没有真实 Windows Codex 宿主，也没有对进程 hard-kill 或跨文件系统 move 做故障注入。替代证据是 Windows command 结构校验、Linux 中文/空格安装副本、进程内 move 失败恢复测试和 raw recovery 测试。
 
-Next：提交 milestone，然后运行 `cleanup` 做最终知识与 git 状态检查。
+## Cleanup 记录
+
+Closure state：`complete`。
+
+- README、循环契约、Skill、hooks 配置和真实命令已对齐。
+- 仓库没有项目级 `AGENTS.md`，因此没有把本次会话状态写进长期规则。
+- 本轮没有需要重新生成的项目工件；验证产生的 `__pycache__` 已清理。
+- 行为、测试和主文档已进入里程碑提交；本次只补充收口记录。
+- 未解决但不阻塞的风险仍是 Windows 真实宿主、进程 hard-kill 和跨文件系统 move 故障注入。
+
+Next：done。分支等待用户审阅或推送；本任务未执行 push。
