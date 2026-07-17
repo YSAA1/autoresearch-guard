@@ -1,0 +1,32 @@
+locked: false
+allowed_splits:
+  - train
+  - validation
+forbidden_splits:
+  - test
+expected_metrics: []
+validation_gates: []
+baseline:
+  required: false
+  metric: ""
+  split: validation
+  aggregation: max
+  min_delta: 0
+  higher_is_better: true
+require_seed: true
+spiral_budget:
+  max_failed_attempts: 3
+  max_flatline_count: 3
+loop_budget:
+  max_turns: 20
+  max_attempts: 12
+  max_consecutive_failures: 3
+  max_flatline_count: 3
+  max_no_progress_turns: 2
+  max_stop_continuations: 1
+  max_wall_time_minutes: 240
+required_outputs:
+  - evidence_ledger.jsonl
+  - audit_report.yaml
+  - ai_evidence_review.md
+  - decision.yaml
