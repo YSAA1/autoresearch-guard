@@ -10,7 +10,7 @@ import tempfile
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Iterable, Iterator
+from typing import Any, Iterable, Iterator
 
 try:
     import yaml as _yaml  # type: ignore
@@ -81,13 +81,6 @@ def skill_root() -> Path:
 
 def template_dir() -> Path:
     return skill_root() / "templates"
-
-
-def ensure_current(research_root: str | Path) -> Path:
-    cur = current_dir(research_root)
-    if not cur.exists():
-        raise ArxError(f"missing current research directory: {cur}")
-    return cur
 
 
 def read_text(path: str | Path) -> str:
@@ -499,23 +492,6 @@ def parse_key_value(values: list[str]) -> dict[str, Any]:
     return parsed
 
 
-def update_state(research_root: str | Path, **updates: Any) -> dict[str, Any]:
-    return mutate_state(research_root, lambda state: state.update(updates))
-
-
-def mutate_state(
-    research_root: str | Path,
-    mutation: Callable[[dict[str, Any]], Any],
-) -> dict[str, Any]:
-    with research_lock(research_root):
-        path = current_dir(research_root) / "state.yaml"
-        state = load_yaml(path)
-        mutation(state)
-        state["updated_at"] = utc_now()
-        write_yaml(path, state)
-        return state
-
-
 def latest_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
     return entries[-1] if entries else None
 
@@ -539,18 +515,6 @@ def contains_pattern(command: str, pattern: str) -> bool:
 
 def load_current_yaml(research_root: str | Path, name: str) -> dict[str, Any]:
     return load_yaml(current_dir(research_root) / name)
-
-
-def research_hooks_enabled(research_root: str | Path) -> bool:
-    try:
-        state = load_current_yaml(research_root, "state.yaml")
-    except Exception:
-        return False
-    return state.get("hooks_enabled") is True
-
-
-def fail(message: str, code: int = 1) -> None:
-    raise SystemExit(f"ERROR: {message}")
 
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:

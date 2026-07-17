@@ -96,7 +96,6 @@ def _default_loop() -> dict[str, Any]:
         "last_turn_id": "",
         "last_progress_digest": "",
         "runtime_revision": 0,
-        "recent_tool_use_ids": [],
         "budget": dict(DEFAULT_LOOP_BUDGET),
     }
 
@@ -152,8 +151,8 @@ def _normalize_state(root: Path, state: dict[str, Any]) -> tuple[dict[str, Any],
             merged[key] = int(merged.get(key) or 0)
         except (TypeError, ValueError):
             merged[key] = 0
-    if not isinstance(merged.get("recent_tool_use_ids"), list):
-        merged["recent_tool_use_ids"] = []
+    # Drop obsolete PostToolUse dedupe field if present on legacy states.
+    merged.pop("recent_tool_use_ids", None)
     if merged != loop:
         normalized["loop"] = merged
         changed = True
@@ -872,22 +871,6 @@ def evaluate_readiness(research_root: str | Path) -> dict[str, Any]:
             "outcome_gate": outcome_report,
             "requires_human": status == "waiting_human" or outcome in {"budget_exhausted", "no_progress"},
         }
-
-
-def remember_tool_use(research_root: str | Path, tool_use_id: str) -> bool:
-    if not tool_use_id:
-        return True
-    root = Path(research_root).resolve()
-    with research_lock(root):
-        state = load_lifecycle_state(root)
-        loop = state.setdefault("loop", _default_loop())
-        recent = [str(item) for item in listify(loop.get("recent_tool_use_ids"))]
-        if tool_use_id in recent:
-            return False
-        recent.append(tool_use_id)
-        loop["recent_tool_use_ids"] = recent[-32:]
-        _write_state(root, state, runtime_only=True)
-        return True
 
 
 def observe_stop(research_root: str | Path, event: dict[str, Any]) -> dict[str, Any]:

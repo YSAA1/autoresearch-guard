@@ -169,11 +169,9 @@ Hooks 默认关闭。初始化时加 `--enable-hooks` 才会让当前 `.research
 Hook 查找 `.research` 时会从 cwd 向上走，但遇到独立项目边界（如 `.git`、`package.json`、`pyproject.toml`，或显式 `.arx-boundary`）且该层没有 campaign 时会停止，避免 monorepo 子包继承父级 hooks。
 
 - `SessionStart` 读取当前状态并补充恢复上下文。
-- `PreToolUse` 提前拦截禁用划分、blocked action、非 owner 实验，以及对锁定协议的 Bash、apply_patch、Edit 或 Write 修改。只读查看协议不会被当成修改。
-- `PostToolUse` 只提醒调用 `arx_record.py`，不会把一次工具成功当成实验成功。
 - `Stop` 只对 owner session 生效。首次未闭环可以返回一次 `decision: block`；`stop_hook_active: true`、非 owner、后台任务和等待人工都会放行。后续 turn 若已用完 continuation 总额，或预算熔断、内部错误发生，会返回 `continue: false`。
 
-Hooks 不是安全边界。它们可能未启用、未 trust、超时，PreToolUse 也不能覆盖所有执行路径。最终门禁仍由 `arx_record.py`、`arx_audit.py`、`arx_decide.py` 和 `arx_archive.py` 重新检查。
+不再提供 PreToolUse / PostToolUse。禁用划分、blocked action、协议漂移和非法决策由 `arx_record.py`、`arx_audit.py`、`arx_decide.py` 和 `arx_archive.py` 确定性拦截。Hooks 不是安全边界：它们可能未启用、未 trust 或超时。
 
 ## 验证
 

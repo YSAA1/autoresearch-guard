@@ -188,12 +188,12 @@ Stop 不会写科研 decision、自动记录实验、归档或启动测试。
 
 ## Hooks 不是安全边界
 
-Codex command hooks 需要用户 trust，匹配的 hooks 可能并发运行，PreToolUse 也不能覆盖全部工具路径。因此：
+Codex command hooks 需要用户 trust，匹配的 hooks 可能并发运行，且 hook 不能覆盖全部工具路径。因此：
 
 - SessionStart 只补充恢复上下文。
 - Stop 只做一次 closure 纠偏。
 - audit、decision 和 archive 必须在没有 hook 帮助时仍能拒绝非法状态。
-- 不再提供 PreToolUse / PostToolUse 门禁；确定性拦截完全由脚本侧完成。
+- 不提供 PreToolUse / PostToolUse；确定性拦截完全由脚本侧完成。
 
 当前实现无法从项目状态判断 Codex UI 中某个 hook 是否已 trust，也不会把 sandbox 或权限策略替换成正则拦截。
 

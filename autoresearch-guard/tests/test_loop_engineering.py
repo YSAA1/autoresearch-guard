@@ -1115,7 +1115,7 @@ class LoopEngineeringContractTest(unittest.TestCase):
         common_module._yaml = None
         payload = {
             "version": 2,
-            "loop": {"recent_tool_use_ids": [], "budget": {}},
+            "loop": {"budget": {}},
             "events": [],
         }
         try:

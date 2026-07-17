@@ -277,7 +277,7 @@ python scripts/arx_init.py \
 | `literature_review.md` | AI | compile 检查被引用的 idea 和现有实现。 |
 | `hypothesis.yaml` | AI | compile 检查必填字段、prior art 和 reuse 绑定；audit digest 输入。 |
 | `protocol.lock.yaml` | AI/人工 | compile、record 和 audit 的协议来源；锁定后不应修改。 |
-| `blocked_actions.yaml` | AI/人工 | Pre hook 早反馈；audit 最终检查。 |
+| `blocked_actions.yaml` | AI/人工 | audit 检查是否触碰禁用动作。 |
 | `claim_boundary.yaml` | AI/人工 | active goal 和 claim support 门禁。 |
 | `active_goal.md` | compile 脚本 | Codex Goal 模式的当前目标、边界和停止条件。 |
 | `evidence_ledger.jsonl` | `arx_record.py` | 带 iteration/protocol/revision 的幂等 evidence 台账；audit 和预算的输入。 |
@@ -291,8 +291,8 @@ python scripts/arx_init.py \
 
 Owner 是 Codex 会话协调机制，不是操作系统权限边界。
 
-- `arx_loop.py start --session-id`、PreToolUse 或 PostToolUse 可以原子认领空 owner。
-- 非 owner 的 Stop 直接放行；非 owner 的实验类 Bash 命令会被 Pre hook 拒绝。
+- `arx_loop.py start --session-id` 可以原子认领空 owner；Stop hook 仅在诊断探测时可能认领。
+- 非 owner 的 Stop 直接放行。
 - pause、abort 和预算熔断会释放 owner。
 - 直接在 hooks 之外运行脚本时，脚本无法知道调用者的 Codex session。真正的最终门禁来自 phase、digest、attempt id、文件锁和 readiness。
 
