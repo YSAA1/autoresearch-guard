@@ -1,29 +1,15 @@
 {
   "hooks": {
-    "PreToolUse": [
+    "SessionStart": [
       {
-        "matcher": "Bash",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${PLUGIN_ROOT}/hooks/pre_tool_command_gate.py\"",
+            "command": "python \"${PLUGIN_ROOT}/hooks/session_recovery.py\"",
             "timeout": 10,
-            "statusMessage": "Checking AutoResearch Guard command policy",
-            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\pre_tool_command_gate.py\""
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"${PLUGIN_ROOT}/hooks/post_tool_capture.py\"",
-            "timeout": 10,
-            "statusMessage": "Checking AutoResearch Guard evidence reminder",
-            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\post_tool_capture.py\""
+            "statusMessage": "Loading AutoResearch Guard recovery state",
+            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\session_recovery.py\""
           }
         ]
       }

@@ -1,80 +1,48 @@
 from __future__ import annotations
 
 import argparse
-import json
-import sys
-from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-PLUGIN_ROOT = SCRIPT_DIR.parent
-COMMON = PLUGIN_ROOT / "skills" / "autoresearch-guard" / "scripts"
-sys.path.insert(0, str(COMMON))
+from hook_runtime import emit, find_research_root, read_event, system_warning
 
-from arx_common import current_dir, load_current_yaml, load_jsonl, read_text, research_hooks_enabled  # noqa: E402
-
-REQUIRED = ["audit_report.yaml", "ai_evidence_review.md", "decision.yaml"]
-
-
-def find_research_root(cwd: Path) -> Path | None:
-    for path in [cwd, *cwd.parents]:
-        if (path / ".research" / "current").exists():
-            return path / ".research"
-    return None
-
-
-def meaningful(path: Path) -> bool:
-    if not path.exists() or not path.is_file():
-        return False
-    text = path.read_text(encoding="utf-8").strip()
-    return bool(text) and "TBD by AI" not in text
-
-
-def has_failures(entries: list[dict]) -> bool:
-    return any(str(e.get("status") or "") == "fail" or int(e.get("exit_code") or 0) != 0 for e in entries)
-
-
-def lessons_updated_for_iteration(research_root: Path, iteration_id: str) -> bool:
-    anti = research_root / "lessons" / "anti_patterns.yaml"
-    if not anti.exists():
-        return False
-    return iteration_id in read_text(anti)
+from arx_lifecycle import claim_session, load_lifecycle_state, observe_stop
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="在缺少闭环产物时阻止结束受控 /goal。")
+    parser = argparse.ArgumentParser(description="把 Codex Stop 事件适配为有界的 AutoResearch Guard closure 决策。")
     parser.add_argument("--cwd", default="")
-    parser.add_argument("--allow-incomplete", action="store_true")
+    parser.add_argument("--allow-incomplete", action="store_true", help="Diagnostic escape hatch: allow this Stop without changing state")
     args = parser.parse_args()
-    cwd = Path(args.cwd or Path.cwd()).resolve()
-    research_root = find_research_root(cwd)
-    if research_root is None:
-        return 0
-    if not research_hooks_enabled(research_root):
+    event = read_event(cwd=args.cwd)
+    research_root = find_research_root(event.cwd)
+    if research_root is None or args.allow_incomplete:
         return 0
 
-    cur = current_dir(research_root)
-    missing = [name for name in REQUIRED if not meaningful(cur / name)]
-    entries = load_jsonl(cur / "evidence_ledger.jsonl")
-    if not entries:
-        missing.append("evidence_ledger.jsonl")
+    try:
+        state = load_lifecycle_state(research_root)
+        if state.get("hooks_enabled") is not True:
+            return 0
 
-    if has_failures(entries) and not args.allow_incomplete:
-        hypothesis = load_current_yaml(research_root, "hypothesis.yaml")
-        iteration_id = str(hypothesis.get("iteration_id") or "")
-        if iteration_id and not lessons_updated_for_iteration(research_root, iteration_id):
-            missing.append("anti_patterns.yaml (含本轮 iteration_id 的失败经验)")
+        payload = dict(event.payload)
+        if args.cwd and not event.session_id:
+            owner = str((state.get("loop") or {}).get("owner_session_id") or "")
+            diagnostic_session = owner or "manual-hook-probe"
+            if not owner and state.get("phase") in {"execution", "review", "closure"}:
+                state = claim_session(research_root, diagnostic_session, reason="manual Stop hook probe")
+            payload["session_id"] = diagnostic_session
+            payload.setdefault("turn_id", "manual-hook-probe-turn")
 
-    if missing:
-        print(
-            json.dumps(
-                {
-                    "decision": "block",
-                    "reason": "AutoResearch Guard closure is incomplete: " + ", ".join(missing),
-                },
-                ensure_ascii=True,
-            )
-        )
-        return 0
+        verdict = observe_stop(research_root, payload)
+        action = verdict.get("action")
+        if action == "continue":
+            emit({"decision": "block", "reason": str(verdict.get("reason") or "AutoResearch Guard closure is incomplete")})
+        elif action == "halt":
+            emit(system_warning(str(verdict.get("reason") or "AutoResearch Guard paused the loop"), stop=True))
+        elif action == "allow":
+            readiness = verdict.get("readiness") or {}
+            if readiness.get("outcome") in {"blocked_requires_human", "aborted"}:
+                emit(system_warning(str(verdict.get("reason") or readiness.get("outcome"))))
+    except Exception as exc:
+        emit(system_warning(f"AutoResearch Guard Stop check failed; the loop was stopped safely: {exc}", stop=True))
     return 0
 
 

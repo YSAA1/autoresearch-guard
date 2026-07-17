@@ -2,22 +2,23 @@
 
 使用证据所能支持的最弱论断。等级定义供 AI 在 `ai_evidence_review.md` 与人工审查中使用。
 
-## 等级
+## 等级（由弱到强）
 
-- `exploratory`：仅 smoke 结果或早期验证信号。
-- `validation`：已锁定的验证协议，且有记录证据并通过审计。
-- `test`：验证成功后、经人工批准的 test 划分评估。
+- `exploratory`：早期信号、单源或未完成对抗；可探索，不可当强结论。
+- `supported`：多源覆盖、冲突已处理或显式降级、对抗未驳倒；可支撑 refine/proceed。
+- `verified`：在 `supported` 之上，证据路径可解析（文件存在或 http(s) URL）、对抗 verdict=`survived`、research gates 全绿。脚本只做存在性/格式与绑定检查，不判断科学真伪。
 
-`paper` / `production` 等级不在 AI 研究循环自主可达范围，已从本表中移除。
+兼容旧表：`validation` 视为 `supported`，`test` 视为 `verified`。
 
-## Promotion 规则
+## Promotion / verified 规则
 
-- 若 `audit_report.yaml` 列出 `test_contamination: true`，不得从 validation 提升到 test 级论断。
-- 若 validation 门禁缺失或失败，必须禁止 `promote`。
-- 若证据不完整，论断至多保持 exploratory。
-- 若 `ai_evidence_review.md` 的「结论与证据」表含 `unsupported`、`prohibited`、缺证据的 supported claim，或 claim 等级超过 `claim_boundary.yaml.max_claim_level`，必须禁止 `promote`。
+- 若 research gates 失败（缺 brief/claims/gaps、关键 gap 源类型不足、对抗表缺失等），禁止 `promote`，也禁止 review 表出现 `verified`。
+- 若 `audit_report.yaml` 列出 `test_contamination: true`，或 validation 门禁缺失/失败，禁止 `promote`。
+- 若证据不完整，论断至多保持 `exploratory`。
+- 若 `ai_evidence_review.md` 的「结论与证据」表含 `unsupported`、`prohibited`、缺证据的 supported claim，或 claim 等级超过 `claim_boundary.yaml.max_claim_level`，禁止 `promote`。
 - 若 `audit_report.yaml.spiral_risk.level == critical`，禁止 `promote`。
+- 若存在 `unresolved` 冲突且目标等级 ≥ `supported`，research gate 失败。
 
 ## 脚本强制范围
 
-`arx_audit` 通过 `forbidden_decisions` 禁止非法 `promote`（含 claim support 与 spiral critical 触发的禁令）。`claim_boundary.yaml` 编入 `active_goal.md` 供 AI 遵守；`arx_audit` 只解析 `ai_evidence_review.md` 的结构化 claim 表，不判断自然语言论断是否科学正确。越界论断的科学语义仍由 AI 与人工在 review 阶段负责。
+`arx_audit` 通过 `forbidden_decisions` 与 `verified_claim_status` 禁止非法 `promote` / 伪 `verified`。`arx_research.evaluate_research_gates` 只计数与格式校验：多源类型、对抗表完整性、证据路径可解析性、claim id 绑定。越界论断的科学语义仍由 AI 与人工在 review 阶段负责。

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from arx_common import add_common_args, current_dir, latest_entry, listify, load_current_yaml, load_jsonl
+from arx_lifecycle import evaluate_readiness, load_lifecycle_state
 
 
 def light_for_baseline(status: dict) -> str:
@@ -37,6 +38,11 @@ def light_for_spiral(status: dict) -> str:
 def render_review_packet(status: dict) -> str:
     audit = status["audit"]
     lines: list[str] = ["# AutoResearch Guard review packet", ""]
+    loop = status.get("loop") or {}
+    lines.append(
+        f"循环：{loop.get('phase')}/{loop.get('status')}；outcome={loop.get('outcome')}；ready={str(loop.get('ready')).lower()}"
+    )
+    lines.append("")
 
     gates: list[tuple[str, str, str]] = []
     gates.append((
@@ -108,7 +114,7 @@ def main() -> int:
 
     root = Path(args.research_root).resolve()
     cur = current_dir(root)
-    state = load_current_yaml(root, "state.yaml")
+    state = load_lifecycle_state(root) if cur.exists() else {}
     hypothesis = load_current_yaml(root, "hypothesis.yaml")
     protocol = load_current_yaml(root, "protocol.lock.yaml")
     blocked = load_current_yaml(root, "blocked_actions.yaml")
@@ -116,12 +122,24 @@ def main() -> int:
     audit = load_current_yaml(root, "audit_report.yaml")
     decision = load_current_yaml(root, "decision.yaml")
     entries = load_jsonl(cur / "evidence_ledger.jsonl") if cur.exists() else []
+    loop_report = evaluate_readiness(root) if cur.exists() else {
+        "ready": False,
+        "outcome": "no_current",
+        "phase": "none",
+        "status": "idle",
+        "owner_session_id": "",
+        "reasons": ["no current iteration"],
+        "next_actions": ["run arx_init.py"],
+        "budget": {},
+    }
 
     status = {
         "research_root": str(root),
         "current_exists": cur.exists(),
         "iteration_id": hypothesis.get("iteration_id") or state.get("iteration_id"),
-        "state": state.get("status"),
+        "state": state.get("phase"),
+        "phase": state.get("phase"),
+        "revision": state.get("revision"),
         "objective": hypothesis.get("objective"),
         "protocol_locked": protocol.get("locked") is True,
         "hooks_enabled": state.get("hooks_enabled") is True,
@@ -144,6 +162,7 @@ def main() -> int:
         "blocked_actions": listify(blocked.get("blocked_actions")),
         "max_claim_level": claim.get("max_claim_level"),
         "requires_human_gate": state.get("human_gate_required"),
+        "loop": loop_report,
     }
 
     if args.review:
@@ -154,6 +173,9 @@ def main() -> int:
         print(f"AutoResearch Guard status: {status['iteration_id']}")
         print(f"- current: {status['current_exists']} ({cur})")
         print(f"- state: {status['state']}")
+        print(f"- loop: {status['loop']['status']} ({status['loop']['outcome']})")
+        print(f"- owner session: {status['loop'].get('owner_session_id') or 'unbound'}")
+        print(f"- ready: {status['loop']['ready']}")
         print(f"- objective: {status['objective']}")
         print(f"- protocol locked: {status['protocol_locked']}")
         print(f"- hooks enabled: {status['hooks_enabled']}")

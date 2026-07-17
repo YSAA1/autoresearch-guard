@@ -1,5 +1,7 @@
 # PRD: AutoResearch Guard 研究质量门禁增强
 
+> 状态：2026-06-30 阶段的历史 PRD。它仍解释 prior art、baseline 和 claim gate 的来源，但不描述当前 loop runtime。当前实现契约见 `autoresearch-guard/skills/autoresearch-guard/references/loop_contract.md`。
+
 ## Problem Statement
 
 用户希望 AutoResearch Guard 支持更可靠的自动研究循环。当前系统已经能初始化研究状态、编译受约束的 goal、记录证据、审计协议违规、检查决策、展示状态并归档，但研究质量门禁还不够硬。

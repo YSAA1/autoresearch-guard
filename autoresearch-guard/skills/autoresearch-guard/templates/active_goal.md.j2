@@ -42,6 +42,25 @@
 
 {{ validation_gate_lines }}
 
+## 过程门禁 vs 结果门禁
+
+- **Process gate**：evidence / audit / review / decision / digests / research gates 齐备（`process_ready`）。
+- **Outcome gate**：`outcome.yaml` 与 `research.yaml` 的 `success_criteria` 全部通过（`outcome_ready`）。
+- **Goal 完成**：仅当 `goal_ready = process_ready AND outcome_ready`（`arx_loop.py check` 的 `ready: true`）。`process_ready` 但 `outcome_ready=false` 视为 incomplete，禁止伪装成 achieved。
+
+## 循环预算
+
+{{ loop_budget_lines }}
+
+## 运行约定
+
+1. 这是研究 campaign 的单次 iteration，不是宿主内部 agent loop。正式编译后运行 `arx_loop.py start --research-root .research`；启用 hooks 时，Stop 只对 owner session 做一次纠偏。
+2. 每次实验后用稳定的 `attempt_id` 调用 `arx_record.py`，再读取 ledger 和门禁结果决定下一步。
+3. 每次准备结束前运行 `arx_loop.py check --research-root .research --json`，把完整输出放进当前对话，让 Goal evaluator 能看到确定性证据。
+4. `outcome: achieved`（即 `goal_ready`）才表示闭环完成。`blocked_requires_human`、`budget_exhausted`、`no_progress`、`aborted` 和基础设施错误都是受控停止，不得伪装成完成，也不得继续盲试。
+5. 对 `promote`：主 agent 自填的 `ai_evidence_review.md` 不够；必须 `prepare-review` 后由同会话 review subagent 写出绑定当前 `audit_digest` 的 `subagent_review.yaml`。`verified` 论断仍走 audit 格式门禁，但不强制 subagent。
+6. Stop hook 只提供一次补救 continuation；它不是循环引擎。重入、等待人工、预算耗尽或无进展时必须允许/强制当前 turn 结束。
+
 ## 完成规则
 
-在证据已记录、确定性审计已运行、AI 证据审查已编写，且 proposed 决策已通过 `arx_decide.py` 检查之前，不得结束此 `/goal`。
+在 evidence 已记录、最终 audit 绑定最新 review/ledger、decision 已提交、outcome gate 通过，且 `arx_loop.py check --json` 返回 `ready: true` / `goal_ready: true` 之前，不得把目标报告为完成。若返回受控停止 outcome，应留下原因、预算和下一条人工可执行动作后停止。

@@ -2,6 +2,8 @@
 
 日期：2026-06-30
 
+> 状态：历史变更摘要。此后插件已重构状态机、预算、digest 和归档；hooks 仍放在约定目录 `hooks/hooks.json`，不写入当前本地 validator 不接受的 manifest 字段。当前行为以 `README.md` 和 `autoresearch-guard/skills/autoresearch-guard/references/loop_contract.md` 为准。
+
 ## 这次解决的问题
 
 这次代码改动把 AutoResearch Guard 的主线拉回“研究质量门禁”：

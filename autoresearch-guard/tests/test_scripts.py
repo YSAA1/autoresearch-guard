@@ -27,6 +27,57 @@ class ScriptFlowTest(unittest.TestCase):
         if result.returncode != 0:
             self.fail(f"command failed\nstdout={result.stdout}\nstderr={result.stderr}")
 
+    def _write_research_products(
+        self,
+        research: Path,
+        *,
+        claim_id: str = "c1",
+        claim_level_target: str = "supported",
+        adversary_verdict: str = "survived",
+    ) -> None:
+        cur = research / "current"
+        (cur / "research.yaml").write_text(
+            "question: Does the validation gate pass with multi-source coverage?\n"
+            "non_goals: []\n"
+            f"claim_level_target: {claim_level_target}\n"
+            "success_criteria: Gate passes and research products are complete\n"
+            "claims:\n"
+            f"  - id: {claim_id}\n"
+            "    statement: Metric passes the declared validation gate\n"
+            "    falsifiable: true\n"
+            "    critical: true\n"
+            "gaps:\n"
+            "  - id: G1\n"
+            "    question: Which independent sources support the claim?\n"
+            f"    claim_ids: [{claim_id}]\n"
+            "    critical: true\n"
+            "    status: closed\n"
+            "sources:\n"
+            "  - id: S1\n"
+            "    gap_id: G1\n"
+            "    source_type: academic\n"
+            "    url: https://arxiv.org/abs/1234.5678\n"
+            "  - id: S2\n"
+            "    gap_id: G1\n"
+            "    source_type: code\n"
+            "    url: https://github.com/example/baseline\n"
+            "conflicts: []\n"
+            "adversary:\n"
+            f"  - claim_id: {claim_id}\n"
+            f"    verdict: {adversary_verdict}\n"
+            "    evidence: https://example.test/counter\n",
+            encoding="utf-8",
+        )
+
+    def _record(self, research: Path, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return self.run_script(
+            "arx_record.py",
+            "--research-root",
+            str(research),
+            *args,
+            cwd=cwd,
+        )
+
     def test_hooks_manifest_commands_run_from_plugin_root(self) -> None:
         hooks_manifest = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))
         hooks = []
@@ -34,7 +85,7 @@ class ScriptFlowTest(unittest.TestCase):
             for entry in entries:
                 hooks.extend(entry["hooks"])
 
-        self.assertEqual(len(hooks), 3)
+        self.assertEqual(len(hooks), 2)
         fake_project = PLUGIN_ROOT.parent
         for hook in hooks:
             command = hook["command"]
@@ -62,7 +113,7 @@ class ScriptFlowTest(unittest.TestCase):
                 self.assertNotIn("allow", payload)
 
     def test_full_research_lifecycle(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -137,15 +188,15 @@ class ScriptFlowTest(unittest.TestCase):
                 "| impl-1 | https://github.com/example/baseline | baseline | reuse |\n",
                 encoding="utf-8",
             )
+            self._write_research_products(research, claim_id="c1")
 
             compile_goal = self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
             self.assert_ok(compile_goal)
             self.assertTrue((research / "current" / "active_goal.md").exists())
 
-            record = self.run_script(
-                "arx_record.py",
-                "--research-root",
-                str(research),
+            record = self._record(
+                research,
+                cwd,
                 "--iteration-id",
                 "demo-i1",
                 "--command",
@@ -156,19 +207,22 @@ class ScriptFlowTest(unittest.TestCase):
                 "0",
                 "--metric",
                 "oracle_top1_gain=0.1",
-                cwd=cwd,
             )
             self.assert_ok(record)
 
-            audit = self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
-            self.assert_ok(audit)
+            self.assert_ok(self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd))
             audit_text = (research / "current" / "audit_report.yaml").read_text(encoding="utf-8")
             self.assertIn("validation_gate_passed: true", audit_text)
 
             (research / "current" / "ai_evidence_review.md").write_text(
-                "# AI Evidence Review\n\nEvidence supports continuing validation only.\n",
+                "# AI Evidence Review\n\n"
+                "## 结论与证据\n\n"
+                "| claim_id | 结论 | 等级 | 证据 | 状态 |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| c1 | Evidence supports continuing validation only | exploratory | ledger:demo-i1 | supported |\n",
                 encoding="utf-8",
             )
+            self.assert_ok(self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd))
             (research / "current" / "decision.proposed.yaml").write_text(
                 "decision: refine\nreason: validation gate passed but this remains validation-only evidence\nnext_goal_type: refine_experiment\nrequires_human: true\n",
                 encoding="utf-8",
@@ -176,6 +230,10 @@ class ScriptFlowTest(unittest.TestCase):
             decide = self.run_script("arx_decide.py", "--research-root", str(research), cwd=cwd)
             self.assert_ok(decide)
             self.assertTrue((research / "current" / "decision.yaml").exists())
+            (research / "current" / "next_goal.md").write_text(
+                "# Next Goal\n\nRun the next bounded validation iteration.\n",
+                encoding="utf-8",
+            )
 
             status = self.run_script("arx_status.py", "--research-root", str(research), "--json", cwd=cwd)
             self.assert_ok(status)
@@ -189,44 +247,9 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertFalse((research / "current").exists())
             self.assertTrue(any((research / "archive").iterdir()))
 
-    def test_pre_tool_hook_blocks_forbidden_split(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
-        test_tmp_root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
-            cwd = Path(tmp)
-            research = cwd / ".research"
-            init = self.run_script(
-                "arx_init.py",
-                "--research-root",
-                str(research),
-                "--iteration-id",
-                "hook-i1",
-                "--enable-hooks",
-                cwd=cwd,
-            )
-            self.assert_ok(init)
-            protocol = research / "current" / "protocol.lock.yaml"
-            protocol.write_text("locked: true\nforbidden_splits:\n  - test\n", encoding="utf-8")
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(HOOKS / "pre_tool_command_gate.py"),
-                    "--cwd",
-                    str(cwd),
-                    "--command",
-                    "python eval.py --split test",
-                ],
-                cwd=str(cwd),
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("forbidden split", result.stdout)
-            self.assertIn("permissionDecision", result.stdout)
 
     def test_hooks_disabled_by_default_do_not_act(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -247,40 +270,6 @@ class ScriptFlowTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            pre = subprocess.run(
-                [
-                    sys.executable,
-                    str(HOOKS / "pre_tool_command_gate.py"),
-                    "--cwd",
-                    str(cwd),
-                    "--command",
-                    "python eval.py --split test",
-                ],
-                cwd=str(cwd),
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            self.assertEqual(pre.returncode, 0, pre.stdout + pre.stderr)
-            self.assertEqual(pre.stdout.strip(), "")
-
-            post = subprocess.run(
-                [
-                    sys.executable,
-                    str(HOOKS / "post_tool_capture.py"),
-                    "--cwd",
-                    str(cwd),
-                    "--command",
-                    "python eval.py --split validation --metrics result.json",
-                ],
-                cwd=str(cwd),
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            self.assertEqual(post.returncode, 0, post.stdout + post.stderr)
-            self.assertEqual(post.stdout.strip(), "")
-
             stop = subprocess.run(
                 [sys.executable, str(HOOKS / "stop_goal_guard.py"), "--cwd", str(cwd)],
                 cwd=str(cwd),
@@ -291,41 +280,16 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertEqual(stop.returncode, 0, stop.stdout + stop.stderr)
             self.assertEqual(stop.stdout.strip(), "")
 
-    def test_post_tool_hook_reminds_when_enabled(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
-        test_tmp_root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
-            cwd = Path(tmp)
-            research = cwd / ".research"
-            init = self.run_script(
-                "arx_init.py",
-                "--research-root",
-                str(research),
-                "--iteration-id",
-                "hook-post-i1",
-                "--enable-hooks",
-                cwd=cwd,
-            )
-            self.assert_ok(init)
-            state = (research / "current" / "state.yaml").read_text(encoding="utf-8")
-            self.assertIn("hooks_enabled: true", state)
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(HOOKS / "post_tool_capture.py"),
-                    "--cwd",
-                    str(cwd),
-                    "--command",
-                    "python eval.py --split validation --metrics result.json",
-                ],
+            session = subprocess.run(
+                [sys.executable, str(HOOKS / "session_recovery.py")],
                 cwd=str(cwd),
                 text=True,
+                input="{}",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("additionalContext", result.stdout)
-            self.assertIn("arx_record.py", result.stdout)
+            self.assertEqual(session.returncode, 0, session.stdout + session.stderr)
+
 
     def _init_base(self, research: Path, cwd: Path, iteration_id: str = "t-i1", enable_hooks: bool = False) -> None:
         args = [
@@ -380,9 +344,10 @@ class ScriptFlowTest(unittest.TestCase):
             "| impl-1 | https://github.com/example/repo | baseline | reuse |\n",
             encoding="utf-8",
         )
+        self._write_research_products(research, claim_id="c1")
 
     def test_reuse_plan_required_for_compile(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -410,7 +375,7 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertIn("evidence_basis", bad2.stderr)
 
     def test_compile_requires_prior_art_and_reuse_traceability(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -428,9 +393,6 @@ class ScriptFlowTest(unittest.TestCase):
                 "| impl-1 | https://github.com/example/repo | baseline | reuse |\n",
                 encoding="utf-8",
             )
-
-            ok = self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
-            self.assert_ok(ok)
 
             hypothesis = research / "current" / "hypothesis.yaml"
             hypothesis.write_text(
@@ -453,8 +415,17 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertNotEqual(missing_impl.returncode, 0, missing_impl.stdout + missing_impl.stderr)
             self.assertIn("reuse_plan.base", missing_impl.stderr)
 
+            hypothesis.write_text(
+                "iteration_id: t-i1\nobjective: o\nhypothesis: h\n"
+                "evidence_basis: idea-1\n"
+                "reuse_plan:\n  base: https://github.com/example/repo\n  build_new_reason: \"\"\n",
+                encoding="utf-8",
+            )
+            ok = self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
+            self.assert_ok(ok)
+
     def test_audit_forbids_promote_when_required_baseline_is_missing(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -483,14 +454,13 @@ class ScriptFlowTest(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assert_ok(self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd))
-            self.assert_ok(self.run_script(
-                "arx_record.py",
-                "--research-root", str(research),
+            self.assert_ok(self._record(
+                research,
+                cwd,
                 "--iteration-id", "base-i1",
                 "--command", "python eval.py --split validation",
                 "--data-split", "validation",
                 "--metric", "score=0.7",
-                cwd=cwd,
             ))
 
             audit = self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
@@ -501,7 +471,7 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertIn("- promote", report)
 
     def test_audit_compares_experiment_against_baseline(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -530,24 +500,22 @@ class ScriptFlowTest(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assert_ok(self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd))
-            self.assert_ok(self.run_script(
-                "arx_record.py",
-                "--research-root", str(research),
+            self.assert_ok(self._record(
+                research,
+                cwd,
                 "--iteration-id", "compare-i1",
                 "--command", "python eval.py --baseline --split validation",
                 "--data-split", "validation",
                 "--metric", "score=0.8",
                 "--role", "baseline",
-                cwd=cwd,
             ))
-            self.assert_ok(self.run_script(
-                "arx_record.py",
-                "--research-root", str(research),
+            self.assert_ok(self._record(
+                research,
+                cwd,
                 "--iteration-id", "compare-i1",
                 "--command", "python eval.py --split validation",
                 "--data-split", "validation",
                 "--metric", "score=0.7",
-                cwd=cwd,
             ))
 
             audit = self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
@@ -557,13 +525,20 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertIn("- promote", report)
 
             self.assert_ok(self.run_script(
-                "arx_record.py",
+                "arx_loop.py",
+                "resume",
                 "--research-root", str(research),
+                "--reason", "collect a stronger bounded experiment",
+                "--reopen-execution",
+                cwd=cwd,
+            ))
+            self.assert_ok(self._record(
+                research,
+                cwd,
                 "--iteration-id", "compare-i1",
                 "--command", "python eval.py --split validation --better",
                 "--data-split", "validation",
                 "--metric", "score=0.9",
-                cwd=cwd,
             ))
             (research / "current" / "ai_evidence_review.md").write_text(
                 "# AI 证据审查\n\n"
@@ -578,10 +553,30 @@ class ScriptFlowTest(unittest.TestCase):
             report2 = (research / "current" / "audit_report.yaml").read_text(encoding="utf-8")
             self.assertIn("baseline_status:", report2)
             self.assertIn("status: pass", report2)
-            self.assertIn("forbidden_decisions: []", report2)
+            self.assertIn("- promote", report2)
+            self.assertIn("subagent_review.yaml required", report2)
+
+            self.assert_ok(
+                self.run_script("arx_loop.py", "prepare-review", "--research-root", str(research), cwd=cwd)
+            )
+            import hashlib
+
+            digest = hashlib.sha256((research / "current" / "audit_report.yaml").read_bytes()).hexdigest()
+            (research / "current" / "subagent_review.yaml").write_text(
+                "verdict: pass\n"
+                "failed_checks: []\n"
+                f"bound_audit_digest: {digest}\n"
+                "reviewer_role: subagent\n"
+                "reviewed_at: 2026-07-17T00:00:00Z\n",
+                encoding="utf-8",
+            )
+            audit3 = self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
+            self.assert_ok(audit3)
+            report3 = (research / "current" / "audit_report.yaml").read_text(encoding="utf-8")
+            self.assertIn("forbidden_decisions: []", report3)
 
     def test_audit_forbids_promote_for_unsupported_claim(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -603,14 +598,13 @@ class ScriptFlowTest(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assert_ok(self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd))
-            self.assert_ok(self.run_script(
-                "arx_record.py",
-                "--research-root", str(research),
+            self.assert_ok(self._record(
+                research,
+                cwd,
                 "--iteration-id", "claim-i1",
                 "--command", "python eval.py --split validation",
                 "--data-split", "validation",
                 "--metric", "score=0.7",
-                cwd=cwd,
             ))
             (research / "current" / "ai_evidence_review.md").write_text(
                 "# AI 证据审查\n\n"
@@ -630,7 +624,7 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertIn("- promote", report)
 
     def test_audit_forbids_promote_for_prohibited_or_boundary_claim(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -652,14 +646,13 @@ class ScriptFlowTest(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assert_ok(self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd))
-            self.assert_ok(self.run_script(
-                "arx_record.py",
-                "--research-root", str(research),
+            self.assert_ok(self._record(
+                research,
+                cwd,
                 "--iteration-id", "boundary-i1",
                 "--command", "python eval.py --split validation",
                 "--data-split", "validation",
                 "--metric", "score=0.7",
-                cwd=cwd,
             ))
             (research / "current" / "ai_evidence_review.md").write_text(
                 "# AI 证据审查\n\n"
@@ -680,7 +673,7 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertIn("- promote", report)
 
     def test_audit_rejects_records_before_compiled_protocol(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -702,14 +695,13 @@ class ScriptFlowTest(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assert_ok(self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd))
-            self.assert_ok(self.run_script(
-                "arx_record.py",
-                "--research-root", str(research),
+            self.assert_ok(self._record(
+                research,
+                cwd,
                 "--iteration-id", "time-i1",
                 "--command", "python eval.py --split validation",
                 "--data-split", "validation",
                 "--metric", "score=0.7",
-                cwd=cwd,
             ))
             state = research / "current" / "state.yaml"
             state.write_text(
@@ -724,7 +716,7 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertIn("record 1 predates compiled protocol", report)
 
     def test_status_review_renders_gate_packet(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -746,14 +738,13 @@ class ScriptFlowTest(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assert_ok(self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd))
-            self.assert_ok(self.run_script(
-                "arx_record.py",
-                "--research-root", str(research),
+            self.assert_ok(self._record(
+                research,
+                cwd,
                 "--iteration-id", "review-i1",
                 "--command", "python eval.py --split validation",
                 "--data-split", "validation",
                 "--metric", "score=0.7",
-                cwd=cwd,
             ))
             (research / "current" / "ai_evidence_review.md").write_text(
                 "# AI 证据审查\n\n"
@@ -775,7 +766,7 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertIn("下钻", review.stdout)
 
     def test_spiral_risk_detection(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -783,25 +774,23 @@ class ScriptFlowTest(unittest.TestCase):
             self._init_base(research, cwd, "spiral-i1")
             self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
             for i in range(3):
-                rec = self.run_script(
-                    "arx_record.py",
-                    "--research-root", str(research),
+                rec = self._record(
+                    research,
+                    cwd,
                     "--iteration-id", "spiral-i1",
                     "--command", f"python eval.py --run {i}",
                     "--data-split", "validation",
                     "--exit-code", "1",
-                    "--status", "fail",
-                    cwd=cwd,
-                )
+                    "--status", "fail",                )
                 self.assert_ok(rec)
-            audit = self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
+            self.assert_ok(self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd))
             report = (research / "current" / "audit_report.yaml").read_text(encoding="utf-8")
             self.assertIn("spiral_risk:", report)
             self.assertIn("level: critical", report)
             self.assertIn("same_hypothesis_attempts", report)
 
     def test_escape_gate_blocks_proceed(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -809,20 +798,24 @@ class ScriptFlowTest(unittest.TestCase):
             self._init_base(research, cwd, "esc-i1")
             self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
             for i in range(3):
-                self.run_script(
-                    "arx_record.py",
-                    "--research-root", str(research),
+                self._record(
+                    research,
+                    cwd,
                     "--iteration-id", "esc-i1",
                     "--command", f"python eval.py --run {i}",
                     "--data-split", "validation",
                     "--exit-code", "1",
-                    "--status", "fail",
-                    cwd=cwd,
-                )
+                    "--status", "fail",                )
             self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
             (research / "current" / "ai_evidence_review.md").write_text(
-                "# Review\n\nno_signal observed.\n", encoding="utf-8",
+                "# Review\n\nno_signal observed.\n\n"
+                "## 结论与证据\n\n"
+                "| claim_id | 结论 | 等级 | 证据 | 状态 |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| c1 | Repeated attempts produced no signal | exploratory | ledger:esc-i1 | supported |\n",
+                encoding="utf-8",
             )
+            self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
             # proceed without spiral_response -> rejected
             (research / "current" / "decision.proposed.yaml").write_text(
                 "decision: proceed\nreason: try again\n", encoding="utf-8",
@@ -840,27 +833,31 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertTrue((research / "current" / "decision.yaml").exists())
 
     def test_lessons_required_on_failure(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
             research = cwd / ".research"
             self._init_base(research, cwd, "fail-i1", enable_hooks=True)
             self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
-            self.run_script(
-                "arx_record.py",
-                "--research-root", str(research),
+            self._record(
+                research,
+                cwd,
                 "--iteration-id", "fail-i1",
                 "--command", "python eval.py",
                 "--data-split", "validation",
                 "--exit-code", "1",
-                "--status", "fail",
-                cwd=cwd,
-            )
+                "--status", "fail",            )
             self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
             (research / "current" / "ai_evidence_review.md").write_text(
-                "# Review\n\nimplementation_bug.\n", encoding="utf-8",
+                "# Review\n\nimplementation_bug.\n\n"
+                "## 结论与证据\n\n"
+                "| claim_id | 结论 | 等级 | 证据 | 状态 |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| c1 | The recorded attempt failed | exploratory | ledger:fail-i1 | supported |\n",
+                encoding="utf-8",
             )
+            self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd)
             (research / "current" / "decision.proposed.yaml").write_text(
                 "decision: stop\nreason: done\nspiral_response: none\n", encoding="utf-8",
             )
@@ -885,7 +882,7 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertEqual(guard2.returncode, 0, guard2.stdout + guard2.stderr)
 
     def test_subtraction_regression(self) -> None:
-        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", "C:/tmp"))
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
         test_tmp_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
             cwd = Path(tmp)
@@ -896,19 +893,137 @@ class ScriptFlowTest(unittest.TestCase):
             self.assertFalse((templates / "audit_report.yaml.j2").exists())
             self.assertFalse((templates / "evidence_record.json.j2").exists())
             self.assertFalse((templates / "decision.yaml.j2").exists())
-            # init should create literature_review.md and ai_evidence_review.md
+            # init should create literature_review.md, ai_evidence_review.md, and research products
             self.assertTrue((research / "current" / "literature_review.md").exists())
             self.assertTrue((research / "current" / "ai_evidence_review.md").exists())
-            # post_tool_capture should not create tool_capture.jsonl
-            subprocess.run(
-                [sys.executable, str(HOOKS / "post_tool_capture.py"),
-                 "--cwd", str(cwd), "--command", "python eval.py --split validation"],
-                cwd=str(cwd), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
-            self.assertFalse((research / "current" / "tool_capture.jsonl").exists())
+            self.assertTrue((research / "current" / "research.yaml").exists())
+            self.assertTrue((research / "current" / "outcome.yaml").exists())
+            self.assertFalse((research / "current" / "work_queue.yaml").exists())
+            self.assertFalse((research / "current" / "progress.md").exists())
+            self.assertFalse((research / "current" / "BOOTSTRAP.md").exists())
             # full flow still works
             self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd)
             self.assertTrue((research / "current" / "active_goal.md").exists())
+
+    def test_research_gates_block_archive_without_multi_source(self) -> None:
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
+        test_tmp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
+            cwd = Path(tmp)
+            research = cwd / ".research"
+            self._init_base(research, cwd, "gate-i1")
+            self._write_research_products(research)
+            (research / "current" / "research.yaml").write_text(
+                "question: Does the validation gate pass with multi-source coverage?\n"
+                "non_goals: []\n"
+                "claim_level_target: supported\n"
+                "success_criteria: Gate passes and research products are complete\n"
+                "claims:\n"
+                "  - id: c1\n"
+                "    statement: Metric passes the declared validation gate\n"
+                "    falsifiable: true\n"
+                "    critical: true\n"
+                "gaps:\n"
+                "  - id: G1\n"
+                "    question: Which independent sources support the claim?\n"
+                "    claim_ids: [c1]\n"
+                "    critical: true\n"
+                "    status: closed\n"
+                "sources:\n"
+                "  - id: S1\n"
+                "    gap_id: G1\n"
+                "    source_type: web\n"
+                "    url: https://example.test/only-one\n"
+                "conflicts: []\n"
+                "adversary:\n"
+                "  - claim_id: c1\n"
+                "    verdict: survived\n"
+                "    evidence: https://example.test/counter\n",
+                encoding="utf-8",
+            )
+            (research / "current" / "protocol.lock.yaml").write_text(
+                "locked: true\nallowed_splits:\n  - validation\nforbidden_splits:\n  - test\n"
+                "expected_metrics:\n  - score\nvalidation_gates:\n  - metric: score\n    operator: '>='\n"
+                "    value: 0.5\n    split: validation\n    aggregation: latest\nrequire_seed: false\n",
+                encoding="utf-8",
+            )
+            self.assert_ok(self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd))
+            self.assert_ok(self._record(
+                research,
+                cwd,
+                "--iteration-id", "gate-i1",
+                "--command", "python eval.py --split validation",
+                "--data-split", "validation",
+                "--metric", "score=0.7",
+            ))
+            (research / "current" / "ai_evidence_review.md").write_text(
+                "# AI 证据审查\n\n## 结论与证据\n\n"
+                "| claim_id | 结论 | 等级 | 证据 | 状态 |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| c1 | single search looks fine | exploratory | ledger:x | supported |\n",
+                encoding="utf-8",
+            )
+            self.assert_ok(self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd))
+            report = (research / "current" / "audit_report.yaml").read_text(encoding="utf-8")
+            self.assertIn("research_gate_status:", report)
+            self.assertIn("blocks_promote: true", report)
+            self.assertIn("- promote", report)
+            (research / "current" / "decision.proposed.yaml").write_text(
+                "decision: stop\nreason: trying to close without multi-source coverage\n"
+                "next_goal_type: none\nrequires_human: false\n",
+                encoding="utf-8",
+            )
+            self.assert_ok(self.run_script("arx_decide.py", "--research-root", str(research), cwd=cwd))
+            archive = self.run_script("arx_archive.py", "--research-root", str(research), cwd=cwd)
+            self.assertNotEqual(archive.returncode, 0, archive.stdout + archive.stderr)
+            self.assertIn("research_gate", archive.stderr)
+
+    def test_verified_claim_requires_resolvable_evidence_and_adversary(self) -> None:
+        test_tmp_root = Path(os.environ.get("ARX_TEST_TMP", tempfile.gettempdir()))
+        test_tmp_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=str(test_tmp_root)) as tmp:
+            cwd = Path(tmp)
+            research = cwd / ".research"
+            self._init_base(research, cwd, "ver-i1")
+            (research / "current" / "claim_boundary.yaml").write_text(
+                "max_claim_level: verified\nallowed_claims:\n  - exploratory\n  - supported\n  - verified\n"
+                "forbidden_claims: []\n",
+                encoding="utf-8",
+            )
+            self._write_research_products(
+                research,
+                claim_id="c1",
+                claim_level_target="verified",
+                adversary_verdict="unverified",
+            )
+            (research / "current" / "protocol.lock.yaml").write_text(
+                "locked: true\nallowed_splits:\n  - validation\nforbidden_splits:\n  - test\n"
+                "expected_metrics:\n  - score\nvalidation_gates:\n  - metric: score\n    operator: '>='\n"
+                "    value: 0.5\n    split: validation\n    aggregation: latest\nrequire_seed: false\n",
+                encoding="utf-8",
+            )
+            self.assert_ok(self.run_script("arx_compile_goal.py", "--research-root", str(research), cwd=cwd))
+            self.assert_ok(self._record(
+                research,
+                cwd,
+                "--iteration-id", "ver-i1",
+                "--command", "python eval.py --split validation",
+                "--data-split", "validation",
+                "--metric", "score=0.9",
+            ))
+            (research / "current" / "ai_evidence_review.md").write_text(
+                "# AI 证据审查\n\n## 结论与证据\n\n"
+                "| claim_id | 结论 | 等级 | 证据 | 状态 |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| c1 | Self-filled verified claim | verified | missing-file.txt | supported |\n",
+                encoding="utf-8",
+            )
+            self.assert_ok(self.run_script("arx_audit.py", "--research-root", str(research), cwd=cwd))
+            report = (research / "current" / "audit_report.yaml").read_text(encoding="utf-8")
+            self.assertIn("verified_claim_status:", report)
+            self.assertIn("unresolvable_evidence:", report)
+            self.assertIn("refuted_or_unverified:", report)
+            self.assertIn("- promote", report)
 
 
 if __name__ == "__main__":

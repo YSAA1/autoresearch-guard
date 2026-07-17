@@ -18,9 +18,25 @@ from arx_common import (
     parse_markdown_tables,
     parse_timestamp,
     read_text,
+    research_lock,
     sha256_file,
     utc_now,
     write_yaml,
+)
+from arx_lifecycle import (
+    audit_input_digests,
+    budget_snapshot,
+    mark_review,
+    require_phase,
+    tracked_metric_keys,
+)
+from arx_harness import subagent_review_errors
+from arx_research import (
+    claim_level_rank,
+    dump_research_gate_yaml,
+    evaluate_research_gates,
+    evaluate_verified_claims,
+    normalize_claim_level,
 )
 
 OPS = {
@@ -30,12 +46,6 @@ OPS = {
     "<=": operator.le,
     "==": operator.eq,
     "!=": operator.ne,
-}
-
-CLAIM_LEVELS = {
-    "exploratory": 0,
-    "validation": 1,
-    "test": 2,
 }
 
 
@@ -82,32 +92,52 @@ def aggregate(values: list[float], mode: str) -> float:
 
 def compute_spiral_risk(
     entries: list[dict[str, Any]],
-    review_text: str,
     blocked: list[tuple[str, str, str]],
     budget: dict[str, Any],
+    tracked_metrics: set[tuple[str, str]],
 ) -> dict[str, Any]:
-    max_failed = int(budget.get("max_failed_attempts") or 3)
+    max_failed = int(budget.get("max_consecutive_failures") or budget.get("max_failed_attempts") or 3)
     max_flat = int(budget.get("max_flatline_count") or 3)
 
-    failed = sum(
-        1 for e in entries
-        if str(e.get("status") or "") == "fail" or int(e.get("exit_code") or 0) != 0
-    )
+    failed = 0
+    for entry in reversed(entries):
+        if str(entry.get("role") or "experiment") == "baseline":
+            continue
+        if str(entry.get("status") or "").lower() in {"fail", "error"} or int(entry.get("exit_code") or 0) != 0:
+            failed += 1
+        else:
+            break
 
     flatline_count = 0
-    by_metric: dict[str, list[float]] = {}
+    by_metric: dict[tuple[str, str], list[float]] = {}
     for e in entries:
+        if str(e.get("role") or "experiment") == "baseline":
+            continue
+        if str(e.get("status") or "").lower() in {"fail", "error"} or int(e.get("exit_code") or 0) != 0:
+            continue
         metrics = e.get("metrics") or {}
         for name, value in metrics.items():
-            if isinstance(value, (int, float)):
-                by_metric.setdefault(str(name), []).append(float(value))
+            metric_name = str(name)
+            metric_key = (metric_name, str(e.get("data_split") or ""))
+            if isinstance(value, (int, float)) and (not tracked_metrics or metric_key in tracked_metrics):
+                by_metric.setdefault(metric_key, []).append(float(value))
     for values in by_metric.values():
-        if len(values) >= max_flat:
-            flat = all(abs(values[i] - values[i - 1]) < 1e-9 for i in range(1, len(values)))
-            if flat:
-                flatline_count = max(flatline_count, len(values))
+        if values:
+            tail = 1
+            for index in range(len(values) - 1, 0, -1):
+                if abs(values[index] - values[index - 1]) < 1e-9:
+                    tail += 1
+                else:
+                    break
+            flatline_count = max(flatline_count, tail)
 
-    no_signal_streak = review_text.lower().count("no_signal")
+    no_signal_streak = 0
+    for entry in reversed(entries):
+        tags = {str(tag).strip().lower() for tag in listify(entry.get("failure_tags"))}
+        if "no_signal" in tags:
+            no_signal_streak += 1
+        else:
+            break
 
     blocked_counts: dict[str, int] = {}
     for action, _reason, pattern in blocked:
@@ -253,10 +283,6 @@ def _lookup(row: dict[str, str], *names: str) -> str:
     return ""
 
 
-def claim_level_rank(level: str) -> int | None:
-    return CLAIM_LEVELS.get(level.strip().lower())
-
-
 def evaluate_claim_support(review_text: str, claim_boundary: dict[str, Any]) -> tuple[dict[str, Any], bool, list[str]]:
     rows = [
         row for row in parse_markdown_tables(review_text)
@@ -276,7 +302,7 @@ def evaluate_claim_support(review_text: str, claim_boundary: dict[str, Any]) -> 
         unknowns.append("ai_evidence_review.md has no claim support table")
         return status, True, unknowns
 
-    max_level = str(claim_boundary.get("max_claim_level") or "exploratory").strip().lower()
+    max_level = normalize_claim_level(str(claim_boundary.get("max_claim_level") or "exploratory"))
     max_rank = claim_level_rank(max_level)
     if max_rank is None:
         unknowns.append(f"claim_boundary.yaml max_claim_level is unknown: {max_level}")
@@ -286,7 +312,7 @@ def evaluate_claim_support(review_text: str, claim_boundary: dict[str, Any]) -> 
     for index, row in enumerate(rows, 1):
         claim_id = _lookup(row, "claim_id", "claim id", "id") or f"claim-{index}"
         conclusion = _lookup(row, "结论", "claim", "conclusion")
-        level = _lookup(row, "等级", "证据等级", "level", "evidence_level").lower()
+        level = normalize_claim_level(_lookup(row, "等级", "证据等级", "level", "evidence_level"))
         evidence = _lookup(row, "证据", "evidence")
         support = _lookup(row, "状态", "status").lower()
         if not conclusion or not level or not support:
@@ -311,36 +337,49 @@ def evaluate_claim_support(review_text: str, claim_boundary: dict[str, Any]) -> 
     return status, blocks, unknowns
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Run deterministic audit for current research evidence.")
-    add_common_args(parser)
-    args = parser.parse_args()
-
-    root = Path(args.research_root).resolve()
-    cur = current_dir(root)
+def run_audit(root: Path, cur: Path) -> int:
     if not cur.exists():
         raise ArxError(f"missing current directory: {cur}")
+    require_phase(root, "audit", {"execution", "review"})
+    input_digests_before = audit_input_digests(root)
 
     state = load_current_yaml(root, "state.yaml")
     protocol = load_current_yaml(root, "protocol.lock.yaml")
     blocked = load_current_yaml(root, "blocked_actions.yaml")
     hypothesis = load_current_yaml(root, "hypothesis.yaml")
     claim_boundary = load_current_yaml(root, "claim_boundary.yaml")
-    entries = load_jsonl(cur / "evidence_ledger.jsonl")
+    all_entries = load_jsonl(cur / "evidence_ledger.jsonl")
+    iteration_id = str(state.get("iteration_id") or "")
+    foreign_entries = [
+        entry for entry in all_entries
+        if str(entry.get("iteration_id") or "") != iteration_id
+    ]
+    entries = [
+        entry for entry in all_entries
+        if str(entry.get("iteration_id") or "") == iteration_id
+    ]
 
-    checks: list[dict[str, Any]] = []
     violations: list[str] = []
     unknowns: list[str] = []
     evidence_violations: list[str] = []
     protocol_violations: list[str] = []
     test_contamination = False
 
+    if str(hypothesis.get("iteration_id") or "") != iteration_id:
+        protocol_violations.append("hypothesis.yaml iteration_id differs from canonical state")
+
     if not entries:
         evidence_violations.append("evidence_ledger.jsonl has no records")
+    if foreign_entries:
+        evidence_violations.append(
+            f"evidence_ledger.jsonl contains {len(foreign_entries)} record(s) for another iteration"
+        )
 
     protocol_path = cur / "protocol.lock.yaml"
     expected_digest = state.get("protocol_digest")
     actual_digest = sha256_file(protocol_path) if protocol_path.exists() else ""
+    if protocol.get("locked") is not True:
+        protocol_violations.append("protocol.lock.yaml is not locked")
     if expected_digest and actual_digest != expected_digest:
         protocol_violations.append("protocol.lock.yaml digest differs from compiled goal state")
     elif not expected_digest:
@@ -364,6 +403,8 @@ def main() -> int:
         metrics = entry.get("metrics") or {}
         if not command:
             evidence_violations.append(f"record {index} missing command")
+        if str(entry.get("protocol_digest") or "") != str(expected_digest or ""):
+            protocol_violations.append(f"record {index} protocol_digest differs from compiled state")
         entry_dt = parse_timestamp(entry.get("timestamp"))
         if compiled_dt and entry_dt and entry_dt < compiled_dt:
             protocol_violations.append(f"record {index} predates compiled protocol")
@@ -400,9 +441,18 @@ def main() -> int:
             if pattern and contains_pattern(command, pattern):
                 protocol_violations.append(f"record {index} ran blocked action {action}: {reason}")
 
-    gate_passed, gate_results, gate_unknowns = evaluate_gates(protocol, entries)
+    successful_entries = [
+        entry for entry in entries
+        if str(entry.get("status") or "").lower() not in {"fail", "error"}
+        and int(entry.get("exit_code") or 0) == 0
+    ]
+    successful_experiments = [
+        entry for entry in successful_entries
+        if str(entry.get("role") or "experiment") != "baseline"
+    ]
+    gate_passed, gate_results, gate_unknowns = evaluate_gates(protocol, successful_experiments)
     unknowns.extend(gate_unknowns)
-    baseline_status, baseline_blocks_promote, baseline_unknowns = evaluate_baseline(protocol, entries)
+    baseline_status, baseline_blocks_promote, baseline_unknowns = evaluate_baseline(protocol, successful_entries)
     unknowns.extend(baseline_unknowns)
 
     violations.extend(evidence_violations)
@@ -414,9 +464,25 @@ def main() -> int:
     review_text = read_text(review_path) if review_path.exists() else ""
     claim_support_status, claim_blocks_promote, claim_unknowns = evaluate_claim_support(review_text, claim_boundary)
     unknowns.extend(claim_unknowns)
+    research_status = evaluate_research_gates(root)
+    verified_claim_status = evaluate_verified_claims(review_text, research_status, base=cur)
+    research_blocks_promote = bool(research_status.get("blocks_promote"))
+    verified_blocks_promote = verified_claim_status.get("status") == "fail"
     blocked_for_spiral = blocked_patterns(load_current_yaml(root, "blocked_actions.yaml"))
-    spiral_budget = protocol.get("spiral_budget") or {}
-    spiral_risk = compute_spiral_risk(entries, review_text, blocked_for_spiral, spiral_budget)
+    spiral_budget = dict(protocol.get("spiral_budget") or {})
+    if isinstance(protocol.get("loop_budget"), dict):
+        spiral_budget.update(protocol["loop_budget"])
+    spiral_risk = compute_spiral_risk(
+        entries,
+        blocked_for_spiral,
+        spiral_budget,
+        tracked_metric_keys(protocol),
+    )
+    loop_budget = budget_snapshot(root, state)
+    if loop_budget.get("exhausted"):
+        spiral_risk = dict(spiral_risk)
+        spiral_risk["level"] = "critical"
+        spiral_risk["signals"] = sorted(set(listify(spiral_risk.get("signals")) + [f"budget:{name}" for name in loop_budget["exhausted"]]))
 
     forbidden_decisions: list[str] = []
     if not evidence_valid or protocol_violation or test_contamination or not gate_passed:
@@ -425,30 +491,64 @@ def main() -> int:
         forbidden_decisions.append("promote")
     if claim_blocks_promote:
         forbidden_decisions.append("promote")
+    if research_blocks_promote:
+        forbidden_decisions.append("promote")
+    if verified_blocks_promote:
+        forbidden_decisions.append("promote")
     if spiral_risk.get("level") == "critical":
         forbidden_decisions.append("promote")
+    # Promote always requires a same-session subagent review bound to the current audit.
+    if not (cur / "subagent_review.yaml").exists():
+        forbidden_decisions.append("promote")
+        unknowns.append("subagent_review.yaml required before promote (run prepare-review + review subagent)")
+    elif (cur / "audit_report.yaml").exists():
+        review_errs = subagent_review_errors(
+            root,
+            required=True,
+            audit_digest=sha256_file(cur / "audit_report.yaml"),
+        )
+        if review_errs:
+            forbidden_decisions.append("promote")
+            unknowns.extend(review_errs)
     forbidden_decisions = sorted(set(forbidden_decisions))
 
+    input_digests_after = audit_input_digests(root)
+    if input_digests_after != input_digests_before:
+        changed = sorted(
+            name
+            for name in set(input_digests_before) | set(input_digests_after)
+            if input_digests_before.get(name) != input_digests_after.get(name)
+        )
+        raise ArxError("audit inputs changed while the snapshot was evaluated: " + ", ".join(changed))
+
     report = {
-        "audit_version": 1,
+        "audit_version": 3,
         "timestamp": utc_now(),
-        "iteration_id": hypothesis.get("iteration_id", state.get("iteration_id", "")),
+        "iteration_id": iteration_id,
         "evidence_valid": evidence_valid,
         "protocol_violation": protocol_violation,
         "test_contamination": test_contamination,
         "validation_gate_passed": gate_passed,
         "baseline_status": baseline_status,
         "claim_support_status": claim_support_status,
+        "research_gate_status": dump_research_gate_yaml(research_status),
+        "verified_claim_status": verified_claim_status,
         "spiral_risk": spiral_risk,
         "forbidden_decisions": forbidden_decisions,
-        "checks": checks,
         "gate_results": gate_results,
         "violations": violations,
         "unknowns": unknowns,
         "evidence_records": len(entries),
         "protocol_digest": actual_digest,
+        "input_digests": input_digests_before,
+        "loop_budget": loop_budget,
     }
-    write_yaml(cur / "audit_report.yaml", report)
+    audit_path = cur / "audit_report.yaml"
+    write_yaml(audit_path, report)
+    if audit_input_digests(root) != input_digests_before:
+        audit_path.unlink(missing_ok=True)
+        raise ArxError("audit inputs changed while audit_report.yaml was being committed; rerun audit")
+    mark_review(root, audit_digest=sha256_file(audit_path))
     print(f"Audit wrote {cur / 'audit_report.yaml'}")
     print(f"evidence_valid={evidence_valid} protocol_violation={protocol_violation} validation_gate_passed={gate_passed} spiral_risk={spiral_risk.get('level')}")
     if violations:
@@ -456,6 +556,21 @@ def main() -> int:
         for violation in violations:
             print(f"- {violation}")
     return 0 if evidence_valid and not protocol_violation else 1
+
+
+def audit_current(research_root: str | Path) -> int:
+    root = Path(research_root).resolve()
+    cur = current_dir(root)
+    with research_lock(root):
+        return run_audit(root, cur)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run deterministic audit for current research evidence.")
+    add_common_args(parser)
+    args = parser.parse_args()
+
+    return audit_current(args.research_root)
 
 
 if __name__ == "__main__":
