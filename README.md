@@ -20,9 +20,10 @@ autoresearch-guard/
 ├── .mcp.json
 ├── hooks/
 │   ├── hooks.json
-│   ├── hook_runtime.py
-│   ├── session_recovery.py
-│   └── stop_goal_guard.py
+│   ├── hook_runtime.js
+│   ├── arx_bridge.py
+│   ├── session_recovery.js
+│   └── stop_goal_guard.js
 ├── skills/autoresearch-guard/
 │   ├── SKILL.md
 │   ├── scripts/

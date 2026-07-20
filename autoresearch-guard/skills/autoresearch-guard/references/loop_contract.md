@@ -22,11 +22,11 @@ Anthropic 的 [Effective harnesses for long-running agents](https://www.anthropi
 
 ## Codex hook adapter
 
-`hooks/hook_runtime.py` 统一处理 Codex hook stdin：
+`hooks/hook_runtime.js` 统一处理 Codex hook stdin（Node 入口，跨平台用 `node` 启动）：
 
 - 读取 `session_id`、`turn_id`、`tool_use_id`、`tool_name`、`cwd` 和 `stop_hook_active`。
 - 从 Bash 的 `command`，以及 apply_patch/Edit/Write 的路径、patch、replacement 或 content 字段构造检查文本。
-- 把领域结果转换成 Codex 支持的 `permissionDecision: deny`、`decision: block`、`additionalContext` 或 `continue: false`。
+- 通过 `hooks/arx_bridge.py` 调用生命周期逻辑，再转换成 Codex 支持的 `permissionDecision: deny`、`decision: block`、`additionalContext` 或 `continue: false`。
 - 使用插件安装副本中的 `${PLUGIN_ROOT}`，不依赖源码 checkout 路径。
 
 Hook adapter 不解释科研结果，不推进审计或 decision，也不在回调中运行长任务。

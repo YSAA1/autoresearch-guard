@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,9 +12,15 @@ from pathlib import Path
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "skills" / "autoresearch-guard" / "scripts"
 HOOKS = PLUGIN_ROOT / "hooks"
+NODE = shutil.which("node") or "node"
 
 
 class ScriptFlowTest(unittest.TestCase):
+    def hook_env(self) -> dict[str, str]:
+        env = dict(os.environ)
+        env["ARX_PYTHON"] = sys.executable
+        return env
+
     def run_script(self, name: str, *args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(SCRIPTS / name), *args],
@@ -21,6 +28,17 @@ class ScriptFlowTest(unittest.TestCase):
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+        )
+
+    def run_hook_cli(self, name: str, *args: str, cwd: Path, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [NODE, str(HOOKS / name), *args],
+            cwd=str(cwd),
+            text=True,
+            input=stdin,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.hook_env(),
         )
 
     def assert_ok(self, result: subprocess.CompletedProcess[str]) -> None:
@@ -270,24 +288,11 @@ class ScriptFlowTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            stop = subprocess.run(
-                [sys.executable, str(HOOKS / "stop_goal_guard.py"), "--cwd", str(cwd)],
-                cwd=str(cwd),
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            stop = self.run_hook_cli("stop_goal_guard.js", "--cwd", str(cwd), cwd=cwd)
             self.assertEqual(stop.returncode, 0, stop.stdout + stop.stderr)
             self.assertEqual(stop.stdout.strip(), "")
 
-            session = subprocess.run(
-                [sys.executable, str(HOOKS / "session_recovery.py")],
-                cwd=str(cwd),
-                text=True,
-                input="{}",
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            session = self.run_hook_cli("session_recovery.js", cwd=cwd, stdin="{}")
             self.assertEqual(session.returncode, 0, session.stdout + session.stderr)
 
 
@@ -863,10 +868,7 @@ class ScriptFlowTest(unittest.TestCase):
             )
             self.run_script("arx_decide.py", "--research-root", str(research), cwd=cwd)
             # guard should block: lessons not updated
-            guard = subprocess.run(
-                [sys.executable, str(HOOKS / "stop_goal_guard.py"), "--cwd", str(cwd)],
-                cwd=str(cwd), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
+            guard = self.run_hook_cli("stop_goal_guard.js", "--cwd", str(cwd), cwd=cwd)
             self.assertEqual(guard.returncode, 0, guard.stdout + guard.stderr)
             self.assertIn("anti_patterns.yaml", guard.stdout)
             self.assertIn('"decision": "block"', guard.stdout)
@@ -875,10 +877,7 @@ class ScriptFlowTest(unittest.TestCase):
                 "anti_patterns:\n  - iteration_id: fail-i1\n    tag: implementation_bug\n",
                 encoding="utf-8",
             )
-            guard2 = subprocess.run(
-                [sys.executable, str(HOOKS / "stop_goal_guard.py"), "--cwd", str(cwd)],
-                cwd=str(cwd), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            )
+            guard2 = self.run_hook_cli("stop_goal_guard.js", "--cwd", str(cwd), cwd=cwd)
             self.assertEqual(guard2.returncode, 0, guard2.stdout + guard2.stderr)
 
     def test_subtraction_regression(self) -> None:

@@ -6,10 +6,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${PLUGIN_ROOT}/hooks/session_recovery.py\"",
+            "command": "node \"${PLUGIN_ROOT}/hooks/session_recovery.js\"",
             "timeout": 10,
             "statusMessage": "Loading AutoResearch Guard recovery state",
-            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\session_recovery.py\""
+            "commandWindows": "node \"%PLUGIN_ROOT%\\hooks\\session_recovery.js\""
           }
         ]
       }
@@ -19,10 +19,10 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"${PLUGIN_ROOT}/hooks/stop_goal_guard.py\"",
+            "command": "node \"${PLUGIN_ROOT}/hooks/stop_goal_guard.js\"",
             "timeout": 10,
             "statusMessage": "Checking AutoResearch Guard closure",
-            "commandWindows": "py -3 \"%PLUGIN_ROOT%\\hooks\\stop_goal_guard.py\""
+            "commandWindows": "node \"%PLUGIN_ROOT%\\hooks\\stop_goal_guard.js\""
           }
         ]
       }

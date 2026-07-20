@@ -94,8 +94,8 @@ python scripts/arx_loop.py check --research-root .research --json
 
 Hooks 默认关闭。`arx_init.py --enable-hooks` 打开；`arx_loop.py hooks --on|--off` 切换。只保留：
 
-- `session_recovery.py`（SessionStart）：注入恢复上下文
-- `stop_goal_guard.py`（Stop）：owner session 一次 closure 纠偏
+- `session_recovery.js`（SessionStart）：注入恢复上下文
+- `stop_goal_guard.js`（Stop）：owner session 一次 closure 纠偏
 
 审计、决策、归档必须在 hooks 关闭时仍能 fail closed。
 

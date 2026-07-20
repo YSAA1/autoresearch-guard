@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from typing import Any
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "skills" / "autoresearch-guard" / "scripts"
 HOOKS = PLUGIN_ROOT / "hooks"
+NODE = shutil.which("node") or "node"
 
 
 class LoopEngineeringContractTest(unittest.TestCase):
@@ -28,6 +30,11 @@ class LoopEngineeringContractTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+
+    def hook_env(self) -> dict[str, str]:
+        env = dict(os.environ)
+        env["ARX_PYTHON"] = sys.executable
+        return env
 
     def run_script(
         self,
@@ -52,16 +59,30 @@ class LoopEngineeringContractTest(unittest.TestCase):
         *,
         cwd: Path | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], dict[str, Any] | None]:
+        script = name if name.endswith(".js") else name.replace(".py", ".js")
         result = subprocess.run(
-            [sys.executable, str(HOOKS / name)],
+            [NODE, str(HOOKS / script)],
             cwd=str(cwd or self.workspace),
             text=True,
             input=json.dumps(payload),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=self.hook_env(),
         )
         output = json.loads(result.stdout) if result.stdout.strip() else None
         return result, output
+
+    def find_research_root(self, cwd: Path) -> Path | None:
+        result = subprocess.run(
+            [NODE, str(HOOKS / "hook_runtime.js"), "--find-root", str(cwd)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.hook_env(),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        text = result.stdout.strip()
+        return Path(text) if text else None
 
     def assert_ok(self, result: subprocess.CompletedProcess[str]) -> None:
         if result.returncode != 0:
@@ -728,28 +749,28 @@ class LoopEngineeringContractTest(unittest.TestCase):
         self.start_loop(research, "owner-session")
 
         first_result, first_output = self.run_hook(
-            "stop_goal_guard.py",
+            "stop_goal_guard.js",
             self.stop_payload(self.workspace, "owner-session"),
         )
         self.assert_ok(first_result)
         self.assertTrue(self.is_block(first_output), first_output)
 
         reentry_result, reentry_output = self.run_hook(
-            "stop_goal_guard.py",
+            "stop_goal_guard.js",
             self.stop_payload(self.workspace, "owner-session", stop_hook_active=True),
         )
         self.assert_ok(reentry_result)
         self.assertFalse(self.is_block(reentry_output), reentry_output)
 
         other_result, other_output = self.run_hook(
-            "stop_goal_guard.py",
+            "stop_goal_guard.js",
             self.stop_payload(self.workspace, "other-session"),
         )
         self.assert_ok(other_result)
         self.assertFalse(self.is_block(other_output), other_output)
 
         background_result, background_output = self.run_hook(
-            "stop_goal_guard.py",
+            "stop_goal_guard.js",
             self.stop_payload(
                 self.workspace,
                 "owner-session",
@@ -772,7 +793,7 @@ class LoopEngineeringContractTest(unittest.TestCase):
         _phase, status, _owner = self.loop_fields(self.loop_check(research))
         self.assertEqual(status, "waiting_human")
         waiting_result, waiting_output = self.run_hook(
-            "stop_goal_guard.py",
+            "stop_goal_guard.js",
             self.stop_payload(self.workspace, "owner-session"),
         )
         self.assert_ok(waiting_result)
@@ -818,7 +839,7 @@ class LoopEngineeringContractTest(unittest.TestCase):
                         )
                     )
                 stop_result, stop_output = self.run_hook(
-                    "stop_goal_guard.py",
+                    "stop_goal_guard.js",
                     self.stop_payload(workspace, "budget-owner"),
                     cwd=workspace,
                 )
@@ -912,21 +933,21 @@ class LoopEngineeringContractTest(unittest.TestCase):
         self.start_loop(research, "owner-session")
 
         first_result, first_output = self.run_hook(
-            "stop_goal_guard.py",
+            "stop_goal_guard.js",
             self.stop_payload(self.workspace, "owner-session"),
         )
         self.assert_ok(first_result)
         self.assertTrue(self.is_block(first_output), first_output)
 
         reentry_result, _reentry_output = self.run_hook(
-            "stop_goal_guard.py",
+            "stop_goal_guard.js",
             self.stop_payload(self.workspace, "owner-session", stop_hook_active=True),
         )
         self.assert_ok(reentry_result)
 
         later_payload = self.stop_payload(self.workspace, "owner-session")
         later_payload["turn_id"] = "turn-2"
-        later_result, later_output = self.run_hook("stop_goal_guard.py", later_payload)
+        later_result, later_output = self.run_hook("stop_goal_guard.js", later_payload)
         self.assert_ok(later_result)
         self.assertIs(later_output.get("continue"), False, later_output)
         report = self.loop_check(research)
@@ -945,7 +966,7 @@ class LoopEngineeringContractTest(unittest.TestCase):
         self.start_loop(research, "owner-session")
         third_payload = self.stop_payload(self.workspace, "owner-session")
         third_payload["turn_id"] = "turn-3"
-        third_result, third_output = self.run_hook("stop_goal_guard.py", third_payload)
+        third_result, third_output = self.run_hook("stop_goal_guard.js", third_payload)
         self.assert_ok(third_result)
         self.assertIs(third_output.get("continue"), False, third_output)
         self.assertFalse(self.is_block(third_output), third_output)
@@ -1137,18 +1158,19 @@ class LoopEngineeringContractTest(unittest.TestCase):
 
         def installed_hook(name: str, payload: dict[str, Any]) -> tuple[subprocess.CompletedProcess[str], dict[str, Any] | None]:
             completed = subprocess.run(
-                [sys.executable, str(installed / "hooks" / name)],
+                [NODE, str(installed / "hooks" / name)],
                 cwd=str(project),
                 text=True,
                 input=json.dumps(payload),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                env=self.hook_env(),
             )
             parsed = json.loads(completed.stdout) if completed.stdout.strip() else None
             return completed, parsed
 
         result, payload = installed_hook(
-            "session_recovery.py",
+            "session_recovery.js",
             {
                 "session_id": "copy-owner",
                 "turn_id": "resume-turn",
@@ -1162,7 +1184,7 @@ class LoopEngineeringContractTest(unittest.TestCase):
         self.assertIn("copy-i1", payload["hookSpecificOutput"]["additionalContext"])
 
         stop_result, stop_payload = installed_hook(
-            "stop_goal_guard.py",
+            "stop_goal_guard.js",
             {
                 "session_id": "copy-owner",
                 "turn_id": "stop-turn",
@@ -1175,13 +1197,6 @@ class LoopEngineeringContractTest(unittest.TestCase):
         self.assertTrue(self.is_block(stop_payload), stop_payload)
 
     def test_find_research_root_stops_at_nested_project_boundary(self) -> None:
-        sys.path.insert(0, str(HOOKS))
-        try:
-            import hook_runtime as hook_module
-        finally:
-            if str(HOOKS) in sys.path:
-                sys.path.remove(str(HOOKS))
-
         mono = self.workspace / "mono"
         pkg_a = mono / "pkg-a"
         pkg_b = mono / "pkg-b"
@@ -1194,15 +1209,15 @@ class LoopEngineeringContractTest(unittest.TestCase):
         (pkg_b / "package.json").write_text("{}", encoding="utf-8")
         (mono / "pyproject.toml").write_text("[project]\nname='mono'\n", encoding="utf-8")
 
-        self.assertEqual(hook_module.find_research_root(nested), pkg_a / ".research")
-        self.assertIsNone(hook_module.find_research_root(pkg_b))
-        self.assertEqual(hook_module.find_research_root(mono), mono / ".research")
+        self.assertEqual(self.find_research_root(nested), pkg_a / ".research")
+        self.assertIsNone(self.find_research_root(pkg_b))
+        self.assertEqual(self.find_research_root(mono), mono / ".research")
 
         orphan = self.workspace / "orphan-pkg"
         orphan.mkdir()
         (orphan / ".arx-boundary").write_text("", encoding="utf-8")
         (self.workspace / ".research" / "current").mkdir(parents=True)
-        self.assertIsNone(hook_module.find_research_root(orphan))
+        self.assertIsNone(self.find_research_root(orphan))
 
     def test_hooks_cli_toggles_and_nested_package_does_not_inherit_parent(self) -> None:
         mono = self.workspace / "mono-hooks"
@@ -1222,14 +1237,8 @@ class LoopEngineeringContractTest(unittest.TestCase):
         self.assert_ok(status)
         self.assertTrue(json.loads(status.stdout)["hooks_enabled"])
 
-        sys.path.insert(0, str(HOOKS))
-        try:
-            import hook_runtime as hook_module
-        finally:
-            if str(HOOKS) in sys.path:
-                sys.path.remove(str(HOOKS))
-        self.assertEqual(hook_module.find_research_root(child), None)
-        self.assertEqual(hook_module.find_research_root(mono), research)
+        self.assertEqual(self.find_research_root(child), None)
+        self.assertEqual(self.find_research_root(mono), research)
 
         off = self.run_script(
             "arx_loop.py",
@@ -1292,7 +1301,7 @@ class LoopEngineeringContractTest(unittest.TestCase):
         self.write_compilable_fixture(research, "ritual-i1", locked=True)
         self.compile_goal(research)
         result, output = self.run_hook(
-            "session_recovery.py",
+            "session_recovery.js",
             {
                 "session_id": "s1",
                 "cwd": str(self.workspace),
